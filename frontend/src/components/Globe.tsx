@@ -7,11 +7,34 @@ import { CAT_COLOR } from '../types'
 
 // ── Helpers ──────────────────────────────────────────────────────
 
+// Calcule la direction exacte du soleil par rapport à la Terre selon l'heure UTC
+function getSunPosition(date: Date): THREE.Vector3 {
+  const hoursUTC = date.getUTCHours() + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600;
+  const lonAngle = (12 - hoursUTC) * 15;
+  const lonRad = lonAngle * (Math.PI / 180);
+  const dayOfYear = Math.floor((date.getTime() - new Date(date.getFullYear(), 0, 0).getTime()) / 86400000);
+  const declination = 23.44 * Math.sin((2 * Math.PI / 365) * (dayOfYear - 81));
+  const latRad = declination * (Math.PI / 180);
+  return new THREE.Vector3(
+    Math.cos(latRad) * Math.cos(lonRad),
+    Math.sin(latRad),
+    -Math.cos(latRad) * Math.sin(lonRad)
+  ).normalize();
+}
+
 function geoToVec3(lat: number, lon: number, altKm: number): THREE.Vector3 {
   const r = 1 + altKm / 6371
   const phi = (90 - lat) * (Math.PI / 180)
   const th = lon * (Math.PI / 180)
-  return new THREE.Vector3(r * Math.sin(phi) * Math.cos(th), r * Math.cos(phi), r * Math.sin(phi) * Math.sin(th))
+  return new THREE.Vector3(
+    r * Math.sin(phi) * Math.cos(th),
+    r * Math.cos(phi),
+    -r * Math.sin(phi) * Math.sin(th)
+  )
+}
+
+function geoToSurface(lat: number, lon: number): THREE.Vector3 {
+  return geoToVec3(lat, lon, 0)
 }
 
 function propagate(tle: { line1: string; line2: string }, date: Date): SatPosition | null {
@@ -30,6 +53,98 @@ function propagate(tle: { line1: string; line2: string }, date: Date): SatPositi
       vel: Math.sqrt(vel.x ** 2 + vel.y ** 2 + vel.z ** 2)
     }
   } catch { return null }
+}
+
+// ── Coverage spotlight ────────────────────────────────────────────
+
+function buildCoverageGroup(
+  satPos: THREE.Vector3,
+  lat: number,
+  lon: number,
+  altKm: number,
+  color: THREE.Color
+): THREE.Group {
+  const group = new THREE.Group()
+  const R = 6371
+  const angleRad = Math.acos(R / (R + altKm))
+  const N = 128
+  const surfaceCenter = geoToSurface(lat, lon)
+  const satDir = surfaceCenter.clone().normalize()
+  const perp = Math.abs(satDir.dot(new THREE.Vector3(0, 1, 0))) > 0.9
+    ? new THREE.Vector3(1, 0, 0)
+    : new THREE.Vector3(0, 1, 0)
+  const tangent = new THREE.Vector3().crossVectors(satDir, perp).normalize()
+
+  // Cercle de couverture sur la surface
+  const circlePoints: THREE.Vector3[] = []
+  for (let i = 0; i <= N; i++) {
+    const theta = (i / N) * Math.PI * 2
+    const rotated = satDir.clone()
+      .multiplyScalar(Math.cos(angleRad))
+      .add(tangent.clone().applyAxisAngle(satDir, theta).multiplyScalar(Math.sin(angleRad)))
+    circlePoints.push(rotated.normalize().multiplyScalar(1.001))
+  }
+  group.add(new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(circlePoints),
+    new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.9 })
+  ))
+
+  // Disque transparent
+  const diskVerts: number[] = []
+  const diskCenter = surfaceCenter.clone().normalize().multiplyScalar(1.0005)
+  for (let i = 0; i < N; i++) {
+    const t1 = (i / N) * Math.PI * 2
+    const t2 = ((i + 1) / N) * Math.PI * 2
+    const p1 = satDir.clone().multiplyScalar(Math.cos(angleRad))
+      .add(tangent.clone().applyAxisAngle(satDir, t1).multiplyScalar(Math.sin(angleRad)))
+      .normalize().multiplyScalar(1.001)
+    const p2 = satDir.clone().multiplyScalar(Math.cos(angleRad))
+      .add(tangent.clone().applyAxisAngle(satDir, t2).multiplyScalar(Math.sin(angleRad)))
+      .normalize().multiplyScalar(1.001)
+    diskVerts.push(diskCenter.x, diskCenter.y, diskCenter.z)
+    diskVerts.push(p1.x, p1.y, p1.z)
+    diskVerts.push(p2.x, p2.y, p2.z)
+  }
+  const diskGeo = new THREE.BufferGeometry()
+  diskGeo.setAttribute('position', new THREE.Float32BufferAttribute(diskVerts, 3))
+  group.add(new THREE.Mesh(diskGeo, new THREE.MeshBasicMaterial({
+    color, transparent: true, opacity: 0.08, side: THREE.DoubleSide, depthWrite: false
+  })))
+
+  // Lignes du cône (satellite → bords de la zone)
+  for (let i = 0; i < 8; i++) {
+    const theta = (i / 8) * Math.PI * 2
+    const edgePoint = satDir.clone().multiplyScalar(Math.cos(angleRad))
+      .add(tangent.clone().applyAxisAngle(satDir, theta).multiplyScalar(Math.sin(angleRad)))
+      .normalize().multiplyScalar(1.001)
+    group.add(new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([satPos, edgePoint]),
+      new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.18 })
+    ))
+  }
+
+  // Ligne nadir (satellite → sol)
+  group.add(new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([satPos, surfaceCenter.clone().multiplyScalar(1.001)]),
+    new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.5 })
+  ))
+
+  // Croix au sol (point nadir)
+  const up = surfaceCenter.clone().normalize()
+  const right = new THREE.Vector3().crossVectors(up, new THREE.Vector3(0, 1, 0)).normalize()
+  const fwd = new THREE.Vector3().crossVectors(up, right).normalize()
+  const cp = surfaceCenter.clone().normalize().multiplyScalar(1.002)
+  const s = 0.012
+  const crossGeo = new THREE.BufferGeometry().setFromPoints([
+    cp.clone().add(right.clone().multiplyScalar(s)),
+    cp.clone().sub(right.clone().multiplyScalar(s)),
+    cp.clone().add(fwd.clone().multiplyScalar(s)),
+    cp.clone().sub(fwd.clone().multiplyScalar(s))
+  ])
+  crossGeo.setIndex([0, 1, 2, 3])
+  group.add(new THREE.LineSegments(crossGeo, new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.9 })))
+
+  return group
 }
 
 // ── Sprite satellites ─────────────────────────────────────────────
@@ -75,13 +190,13 @@ function getSatMaterial(color: string, category: string): THREE.SpriteMaterial {
   return mat
 }
 
-// ── Shader Terre jour/nuit ────────────────────────────────────────
+// ── Shader Terre jour/nuit (CORRIGÉ POUR ÉCLAIRAGE TEMPS RÉEL) ────
 
 const earthVertexShader = `
-  varying vec3 vNormal;
+  varying vec3 vWorldNormal;
   varying vec2 vUv;
   void main() {
-    vNormal = normalize(normalMatrix * normal);
+    vWorldNormal = normalize((modelMatrix * vec4(normal, 0.0)).xyz);
     vUv = uv;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
@@ -91,25 +206,19 @@ const earthFragmentShader = `
   uniform sampler2D dayTexture;
   uniform sampler2D nightTexture;
   uniform vec3 sunDirection;
-  varying vec3 vNormal;
+  varying vec3 vWorldNormal;
   varying vec2 vUv;
 
   void main() {
     vec4 dayColor   = texture2D(dayTexture,   vUv);
     vec4 nightColor = texture2D(nightTexture, vUv);
-
-    float sunDot  = dot(vNormal, normalize(sunDirection));
+    float sunDot  = dot(normalize(vWorldNormal), normalize(sunDirection));
     float blend   = smoothstep(-0.15, 0.3, sunDot);
-
-    // Boost city lights légèrement
     vec4 night = vec4(nightColor.rgb * 2.0, 1.0);
     vec4 day   = vec4(dayColor.rgb, 1.0);
-
-    // Ligne de terminateur (légère teinte orange/rouge)
     float terminator = smoothstep(-0.05, 0.05, sunDot);
     vec3 termColor   = mix(vec3(0.9, 0.4, 0.15), day.rgb, terminator);
     vec4 blended     = mix(night, vec4(termColor, 1.0), blend);
-
     gl_FragColor = blended;
   }
 `
@@ -130,7 +239,7 @@ const atmosphereFragmentShader = `
   }
 `
 
-// ── Texture procédurale (fallback) ───────────────────────────────
+// ── Textures ──────────────────────────────────────────────────────
 
 function createProceduralDay(): THREE.CanvasTexture {
   const W = 2048, H = 1024
@@ -172,25 +281,15 @@ function createProceduralNight(): THREE.CanvasTexture {
   canvas.width = W; canvas.height = H
   const ctx = canvas.getContext('2d')!
   ctx.fillStyle = '#000005'; ctx.fillRect(0, 0, W, H)
-  // Lumières des villes (clusters par région)
   const cities = [
-    // Europe
     ...Array.from({length:120}, () => [((Math.random()*40-10+180)/360)*W, ((90-(Math.random()*25+35))/180)*H]),
-    // Amérique du Nord est
     ...Array.from({length:100}, () => [((Math.random()*30-90+180)/360)*W, ((90-(Math.random()*15+35))/180)*H]),
-    // Côte ouest USA
     ...Array.from({length:40}, () => [((Math.random()*10-125+180)/360)*W, ((90-(Math.random()*15+33))/180)*H]),
-    // Japon/Corée
     ...Array.from({length:80}, () => [((Math.random()*15+130+180)/360)*W, ((90-(Math.random()*10+33))/180)*H]),
-    // Chine côtière
     ...Array.from({length:100}, () => [((Math.random()*20+110+180)/360)*W, ((90-(Math.random()*15+25))/180)*H]),
-    // Inde
     ...Array.from({length:80}, () => [((Math.random()*20+70+180)/360)*W, ((90-(Math.random()*20+10))/180)*H]),
-    // Brésil sud-est
     ...Array.from({length:40}, () => [((Math.random()*10-50+180)/360)*W, ((90-(Math.random()*8-25))/180)*H]),
-    // Moyen-Orient
     ...Array.from({length:50}, () => [((Math.random()*20+40+180)/360)*W, ((90-(Math.random()*10+20))/180)*H]),
-    // Nigéria/Lagos
     ...Array.from({length:20}, () => [((Math.random()*5+3+180)/360)*W, ((90-(Math.random()*5+5))/180)*H]),
   ]
   cities.forEach(([x, y]) => {
@@ -218,13 +317,13 @@ function buildGrid(scene: THREE.Scene) {
   for (let lat = -60; lat <= 60; lat += 30) {
     const pts: THREE.Vector3[] = []
     const phi = (90 - lat) * (Math.PI / 180)
-    for (let i = 0; i <= 64; i++) { const th = (i/64)*2*Math.PI; pts.push(new THREE.Vector3(R*Math.sin(phi)*Math.cos(th), R*Math.cos(phi), R*Math.sin(phi)*Math.sin(th))) }
+    for (let i = 0; i <= 64; i++) { const th = (i/64)*2*Math.PI; pts.push(new THREE.Vector3(R*Math.sin(phi)*Math.cos(th), R*Math.cos(phi), -R*Math.sin(phi)*Math.sin(th))) }
     scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat))
   }
   for (let lon = 0; lon < 360; lon += 30) {
     const pts: THREE.Vector3[] = []
     const th = lon * (Math.PI / 180)
-    for (let i = 0; i <= 64; i++) { const phi = (i/64)*Math.PI; pts.push(new THREE.Vector3(R*Math.sin(phi)*Math.cos(th), R*Math.cos(phi), R*Math.sin(phi)*Math.sin(th))) }
+    for (let i = 0; i <= 64; i++) { const phi = (i/64)*Math.PI; pts.push(new THREE.Vector3(R*Math.sin(phi)*Math.cos(th), R*Math.cos(phi), -R*Math.sin(phi)*Math.sin(th))) }
     scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat))
   }
 }
@@ -235,8 +334,9 @@ export default function Globe() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const meshMapRef = useRef<Map<string, THREE.Sprite>>(new Map())
   const orbitLineRef = useRef<THREE.Line | null>(null)
+  const coverageRef = useRef<THREE.Group | null>(null)  // ← NOUVEAU
   const sceneRef = useRef<THREE.Scene | null>(null)
-  const { satellites, activeFilters, selectedNorad, selectSat, updatePosition } = useSatStore()
+  const { satellites, activeFilters, selectedNorad, selectSat, updatePosition, positions } = useSatStore()  // ← positions ajouté
 
   useEffect(() => {
     if (!canvasRef.current) return
@@ -251,7 +351,6 @@ export default function Globe() {
     renderer.setSize(canvas.clientWidth, canvas.clientHeight)
     renderer.setClearColor(0x000005, 1)
 
-    // Étoiles
     const sp: number[] = []
     for (let i = 0; i < 8000; i++) {
       const v = new THREE.Vector3().randomDirection().multiplyScalar(80 + Math.random() * 120)
@@ -259,33 +358,23 @@ export default function Globe() {
     }
     const sg = new THREE.BufferGeometry()
     sg.setAttribute('position', new THREE.Float32BufferAttribute(sp, 3))
-    // Tailles variées
     const sizes = new Float32Array(8000).map(() => Math.random() * 1.5 + 0.3)
     sg.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1))
     scene.add(new THREE.Points(sg, new THREE.PointsMaterial({
       color: 0xffffff, size: 0.08, transparent: true, opacity: 0.9, sizeAttenuation: true
     })))
 
-    // Direction soleil (fixe dans la scène)
-    const sunDir = new THREE.Vector3(1, 0.3, 0.5).normalize()
-
-    // Textures
+    const initialSunDir = getSunPosition(new Date())
     const loader = new THREE.TextureLoader()
     loader.crossOrigin = 'anonymous'
 
     const dayTex   = createProceduralDay()
     const nightTex = createProceduralNight()
 
-    // Tenter de charger Blue Marble depuis CDN
-    const tryLoad = (url: string, onSuccess: (t: THREE.Texture) => void) => {
-      loader.load(url, onSuccess, undefined, () => {})
-    }
-
-    // Matériau Terre avec shader jour/nuit
-   const earthUniforms: { [key: string]: { value: unknown } } = {
+    const earthUniforms: { [key: string]: { value: unknown } } = {
       dayTexture:   { value: dayTex },
       nightTexture: { value: nightTex },
-      sunDirection: { value: sunDir }
+      sunDirection: { value: initialSunDir }
     }
 
     const earthMat = new THREE.ShaderMaterial({
@@ -297,17 +386,14 @@ export default function Globe() {
     const earthMesh = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 64), earthMat)
     scene.add(earthMesh)
 
-    // Tenter de charger les vraies textures
-    tryLoad('https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg', (t) => {
-      earthUniforms.dayTexture.value = t
-    })
-    tryLoad('https://unpkg.com/three-globe/example/img/earth-night.jpg', (t) => {
-      earthUniforms.nightTexture.value = t
-    })
+    const tryLoad = (url: string, onSuccess: (t: THREE.Texture) => void) => {
+      loader.load(url, onSuccess, undefined, () => {})
+    }
+    tryLoad('https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg', (t) => { earthUniforms.dayTexture.value = t })
+    tryLoad('https://unpkg.com/three-globe/example/img/earth-night.jpg', (t) => { earthUniforms.nightTexture.value = t })
 
     buildGrid(scene)
 
-    // Atmosphère (shader)
     const atmoMesh = new THREE.Mesh(
       new THREE.SphereGeometry(1.06, 32, 32),
       new THREE.ShaderMaterial({
@@ -321,19 +407,16 @@ export default function Globe() {
     )
     scene.add(atmoMesh)
 
-    // Halo atmosphère intérieur
     scene.add(new THREE.Mesh(
       new THREE.SphereGeometry(1.02, 32, 32),
       new THREE.MeshBasicMaterial({ color: 0x0033aa, transparent: true, opacity: 0.06, side: THREE.BackSide })
     ))
 
-    // Lumière soleil
     const sunLight = new THREE.DirectionalLight(0xfff5e0, 2.0)
-    sunLight.position.copy(sunDir.clone().multiplyScalar(10))
+    sunLight.position.copy(initialSunDir.clone().multiplyScalar(10))
     scene.add(sunLight)
     scene.add(new THREE.AmbientLight(0x050510, 1.0))
 
-    // Camera
     const updateCamera = () => {
       camera.position.set(
         sph.r * Math.sin(sph.phi) * Math.sin(sph.theta),
@@ -344,7 +427,6 @@ export default function Globe() {
     }
     updateCamera()
 
-    // Contrôles
     let isDrag = false, px = 0, py = 0
     canvas.addEventListener('mousedown', e => { isDrag = true; px = e.clientX; py = e.clientY })
     window.addEventListener('mouseup', () => { isDrag = false })
@@ -359,6 +441,7 @@ export default function Globe() {
       sph.r = Math.max(1.3, Math.min(9, sph.r + e.deltaY * 0.002))
       updateCamera()
     }, { passive: true })
+
     canvas.addEventListener('click', e => {
       const rect = canvas.getBoundingClientRect()
       const mx = ((e.clientX - rect.left) / rect.width) * 2 - 1
@@ -380,7 +463,14 @@ export default function Globe() {
     ro.observe(canvas)
 
     let raf: number
-    const animate = () => { raf = requestAnimationFrame(animate); renderer.render(scene, camera) }
+    const animate = () => {
+      raf = requestAnimationFrame(animate)
+      const currentSunDir = getSunPosition(new Date())
+      earthUniforms.sunDirection.value.copy(currentSunDir)
+      sunLight.position.copy(currentSunDir.clone().multiplyScalar(10))
+      if (!isDrag) { sph.theta += 0.00006; updateCamera() }
+      renderer.render(scene, camera)
+    }
     animate()
 
     return () => { cancelAnimationFrame(raf); ro.disconnect(); renderer.dispose() }
@@ -421,22 +511,45 @@ export default function Globe() {
     satellites.forEach(sat => { const s = meshMapRef.current.get(sat.norad); if (s) s.visible = activeFilters.has(sat.category) })
   }, [activeFilters])
 
+  // ── Orbite + couverture du satellite sélectionné ──────────────
   useEffect(() => {
     const scene = sceneRef.current; if (!scene) return
+
+    // Supprimer orbite précédente
     if (orbitLineRef.current) { scene.remove(orbitLineRef.current); orbitLineRef.current = null }
+    // Supprimer couverture précédente
+    if (coverageRef.current) { scene.remove(coverageRef.current); coverageRef.current = null }
+
     if (!selectedNorad) return
     const sat = satellites.find(s => s.norad === selectedNorad); if (!sat) return
+
+    // Orbite
     const rec = satellite.twoline2satrec(sat.tle.line1, sat.tle.line2)
     const periodMs = (2 * Math.PI / rec.no) * 60 * 1000
     const pts: THREE.Vector3[] = []
     const now = Date.now()
-    for (let i = 0; i <= 200; i++) { const pos = propagate(sat.tle, new Date(now + (i/200)*periodMs)); if (pos) pts.push(geoToVec3(pos.lat, pos.lon, pos.alt)) }
+    for (let i = 0; i <= 200; i++) {
+      const pos = propagate(sat.tle, new Date(now + (i/200)*periodMs))
+      if (pos) pts.push(geoToVec3(pos.lat, pos.lon, pos.alt))
+    }
     if (pts.length > 1) {
-      const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
-        new THREE.LineBasicMaterial({ color: new THREE.Color(CAT_COLOR[sat.category]), transparent: true, opacity: 0.5 }))
+      const line = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(pts),
+        new THREE.LineBasicMaterial({ color: new THREE.Color(CAT_COLOR[sat.category]), transparent: true, opacity: 0.5 })
+      )
       scene.add(line); orbitLineRef.current = line
     }
-  }, [selectedNorad, satellites])
+
+    // Couverture satellite (utilise la position actuelle depuis le store)
+    const pos = positions[selectedNorad]
+    if (pos) {
+      const color = new THREE.Color(CAT_COLOR[sat.category] || '#00ccff')
+      const satVec = geoToVec3(pos.lat, pos.lon, pos.alt)
+      const cg = buildCoverageGroup(satVec, pos.lat, pos.lon, pos.alt, color)
+      scene.add(cg)
+      coverageRef.current = cg
+    }
+  }, [selectedNorad, satellites, positions])
 
   return <canvas ref={canvasRef} style={{ display: 'block', width: '100%', height: '100%', cursor: 'grab' }} />
 }
