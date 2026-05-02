@@ -6,6 +6,37 @@ import { CAT_COLOR, CAT_LABEL, type SatCategory } from './types'
 
 const ALL_CATS: SatCategory[] = ['station', 'gps', 'weather', 'science', 'debris', 'starlink']
 
+const LAUNCH_DATES: Record<string, string> = {
+  '25544': '1998-11-20', '48274': '2021-04-29', '20580': '1990-04-24',
+  '25994': '1999-12-18', '27424': '2002-05-04', '39084': '2013-02-11',
+  '49260': '2021-09-27', '39634': '2014-04-03', '41456': '2016-04-25',
+  '40697': '2015-06-23', '42063': '2017-03-07', '43613': '2018-09-15',
+  '43476': '2018-05-22', '44874': '2019-12-18', '41866': '2016-11-19',
+  '51850': '2022-03-01', '43226': '2018-03-01', '40267': '2014-10-07',
+  '41836': '2016-11-02', '28654': '2005-05-20', '33591': '2009-02-06',
+  '43013': '2017-11-18', '54234': '2022-11-10', '29499': '2006-10-19',
+  '38771': '2012-09-17', '43689': '2018-11-07', '40534': '2015-02-05',
+  '40730': '2015-07-15', '25933': '1999-10-07', '35752': '2009-08-17',
+  '43873': '2018-12-23', '44506': '2019-08-22', '45854': '2020-06-30',
+  '28474': '2004-11-06', '38833': '2012-10-04', '39741': '2014-05-17',
+  '44713': '2019-11-11', '44914': '2019-11-11', '47528': '2021-01-20',
+  '52256': '2022-02-03', '55002': '2022-12-28', '45132': '2020-02-06',
+  '29228': '1999-05-10', '33442': '2009-02-10', '33778': '2009-02-10',
+}
+
+function timeSinceLaunch(norad: string): string {
+  const dateStr = LAUNCH_DATES[norad]
+  if (!dateStr) return '—'
+  const diffMs = Date.now() - new Date(dateStr).getTime()
+  const days = Math.floor(diffMs / 86400000)
+  const years = Math.floor(days / 365)
+  const months = Math.floor((days % 365) / 30)
+  if (years > 0 && months > 0) return `${years} an${years > 1 ? 's' : ''} ${months} mois`
+  if (years > 0) return `${years} an${years > 1 ? 's' : ''}`
+  if (months > 0) return `${months} mois`
+  return `${days} jours`
+}
+
 export default function App() {
   const { satellites, positions, loading, error, selectedNorad, activeFilters,
           load, selectSat, toggleFilter } = useSatStore()
@@ -133,10 +164,8 @@ export default function App() {
             boxShadow: `0 0 30px ${CAT_COLOR[selected.category]}22`,
           }}>
 
-            {/* Modèle 3D satellite */}
             <div style={{ position: 'relative' }}>
-              <SatelliteViewer3D category={selected.category} name={selected.name} />
-              {/* Badge catégorie */}
+              <SatelliteViewer3D category={selected.category} name={selected.name} norad={selected.norad} />
               <div style={{
                 position: 'absolute', top: 8, left: 8,
                 background: 'rgba(0,0,0,0.7)',
@@ -147,7 +176,6 @@ export default function App() {
               }}>
                 {CAT_LABEL[selected.category].toUpperCase()}
               </div>
-              {/* Bouton fermer */}
               <button onClick={() => selectSat(null)} style={{
                 position: 'absolute', top: 6, right: 6,
                 background: 'rgba(0,0,0,0.7)',
@@ -157,30 +185,28 @@ export default function App() {
                 width: 22, height: 22,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
               }}>✕</button>
-              {/* Label modèle 3D */}
               <div style={{
                 position: 'absolute', bottom: 6, right: 8,
                 fontSize: 8, color: 'rgba(0,180,255,0.3)', letterSpacing: 1,
               }}>3D MODEL</div>
             </div>
 
-            {/* Nom */}
             <div style={{ padding: '10px 14px 6px', fontFamily: 'Orbitron, sans-serif', fontSize: 10.5, fontWeight: 700, color: '#00ccff', letterSpacing: 2, textTransform: 'uppercase' }}>
               {selected.name}
             </div>
 
-            {/* Données */}
             <div style={{ padding: '0 14px 12px' }}>
               {[
-                ['LATITUDE',   selectedPos ? `${selectedPos.lat.toFixed(4)}°` : '—'],
-                ['LONGITUDE',  selectedPos ? `${selectedPos.lon.toFixed(4)}°` : '—'],
-                ['ALTITUDE',   selectedPos ? `${Math.round(selectedPos.alt)} km` : '—'],
-                ['VITESSE',    selectedPos ? `${selectedPos.vel.toFixed(2)} km/s` : '—'],
-                ['NORAD ID',   selected.norad],
+                ['LATITUDE',          selectedPos ? `${selectedPos.lat.toFixed(4)}°` : '—'],
+                ['LONGITUDE',         selectedPos ? `${selectedPos.lon.toFixed(4)}°` : '—'],
+                ['ALTITUDE',          selectedPos ? `${Math.round(selectedPos.alt)} km` : '—'],
+                ['VITESSE',           selectedPos ? `${selectedPos.vel.toFixed(2)} km/s` : '—'],
+                ['EN ORBITE DEPUIS',  timeSinceLaunch(selected.norad)],
+                ['NORAD ID',          selected.norad],
               ].map(([k, v]) => (
                 <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid rgba(0,180,255,0.06)', fontSize: 10.5 }}>
-                  <span style={{ color: 'rgba(100,150,255,0.55)' }}>{k}</span>
-                  <span style={{ color: '#b0d8f8' }}>{v}</span>
+                  <span style={{ color: k === 'EN ORBITE DEPUIS' ? 'rgba(100,200,255,0.7)' : 'rgba(100,150,255,0.55)' }}>{k}</span>
+                  <span style={{ color: k === 'EN ORBITE DEPUIS' ? '#00ffcc' : '#b0d8f8', fontWeight: k === 'EN ORBITE DEPUIS' ? 'bold' : 'normal' }}>{v}</span>
                 </div>
               ))}
             </div>
