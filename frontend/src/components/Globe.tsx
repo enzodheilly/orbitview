@@ -468,7 +468,7 @@ export default function Globe() {
       const currentSunDir = getSunPosition(new Date())
       earthUniforms.sunDirection.value.copy(currentSunDir)
       sunLight.position.copy(currentSunDir.clone().multiplyScalar(10))
-      if (!isDrag) { sph.theta += 0.00006; updateCamera() }
+      if (!isDrag) { sph.theta += 0.0000012; updateCamera() }
       renderer.render(scene, camera)
     }
     animate()
