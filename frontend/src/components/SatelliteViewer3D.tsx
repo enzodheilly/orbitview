@@ -1,11 +1,54 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import * as THREE from 'three'
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader'
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { CAT_COLOR } from '../types'
 import { useSatStore } from '../store/satelliteStore'
 
 interface Props { category: string; name: string; norad?: string }
+
+function getFlag(countryCode: string | undefined) {
+  if (!countryCode) return '🛰️';
+  const code = countryCode.toUpperCase().trim();
+  const flags: Record<string, string> = {
+    'US': '🇺🇸', 'USA': '🇺🇸', 'CAN': '🇨🇦', 'BRA': '🇧🇷', 'BR': '🇧🇷', 'MEX': '🇲🇽',
+    'FR': '🇫🇷', 'FRA': '🇫🇷', 'GER': '🇩🇪', 'DEU': '🇩🇪', 'UK': '🇬🇧', 'GBR': '🇬🇧',
+    'IT': '🇮🇹', 'ITA': '🇮🇹', 'SPN': '🇪🇸', 'ESP': '🇪🇸', 'ESA': '🇪🇺', 'EU': '🇪🇺',
+    'EUME': '🇪🇺', 'NETH': '🇳🇱', 'NLD': '🇳🇱', 'SWED': '🇸🇪', 'SWE': '🇸🇪',
+    'PRC': '🇨🇳', 'CN': '🇨🇳', 'JPN': '🇯🇵', 'JP': '🇯🇵', 'IND': '🇮🇳', 'IN': '🇮🇳',
+    'KR': '🇰🇷', 'KOR': '🇰🇷', 'KP': '🇰🇵', 'PRK': '🇰🇵', 'AUS': '🇦🇺',
+    'ISRA': '🇮🇱', 'ISR': '🇮🇱', 'CIS': '🇷🇺', 'RU': '🇷🇺', 'RUS': '🇷🇺', 'SU': '🇷🇺', 'RSU': '🇷🇺',
+    'IRAN': '🇮🇷', 'IRN': '🇮🇷', 'ARGN': '🇦🇷', 'TURK': '🇹🇷',
+  };
+  return flags[code] || '🏳️';
+}
+
+// Calcule l'âge du satellite depuis son lancement
+function getLaunchAge(satellite: any) {
+  const dateStr = satellite?.launch_date || satellite?.launchDate;
+  
+  if (!dateStr || dateStr.startsWith('0000') || dateStr === 'null') return 'UNKNOWN';
+
+  const launch = new Date(dateStr);
+  const now = new Date();
+
+  if (isNaN(launch.getTime())) return 'UNKNOWN';
+
+  const diffInMs = now.getTime() - launch.getTime();
+
+  if (diffInMs < -86400000) return 'SCHEDULED';
+
+  const days = Math.max(0, Math.floor(diffInMs / (1000 * 60 * 60 * 24)));
+  
+  if (days <= 1) return 'NEWLY LAUNCHED';
+
+  const years = Math.floor(days / 365.25);
+  const months = Math.floor((days % 365.25) / 30.44);
+
+  if (years > 0) return `${years}Y ${months}M`;
+  if (months > 0) return `${months}M ${days % 30}D`;
+  return `${days} DAYS`;
+}
 
 function addMesh(group: THREE.Group, geo: THREE.BufferGeometry, mat: THREE.Material, px=0,py=0,pz=0,rx=0,ry=0,rz=0) {
   const m = new THREE.Mesh(geo, mat); m.position.set(px,py,pz); m.rotation.set(rx,ry,rz); group.add(m); return m
@@ -55,7 +98,6 @@ function getGltfPath(category: string, name: string, norad?: string): string | n
   return null
 }
 
-// Convertit lat/lon/alt en position 3D (km, même convention que Globe.tsx)
 function geoToWorld(lat: number, lon: number, altKm: number): THREE.Vector3 {
   const r = 6371 + altKm
   const phi = (90 - lat) * Math.PI / 180
@@ -67,13 +109,10 @@ function geoToWorld(lat: number, lon: number, altKm: number): THREE.Vector3 {
   )
 }
 
-// Calcule la direction tangentielle orbitale analytiquement (sans frame diff)
-// à partir de lat/lon seulement (approximation valide pour orbites LEO)
 function getOrbitalTangent(lat: number, lon: number, inclinationDeg: number): THREE.Vector3 {
   const inc = inclinationDeg * Math.PI / 180
   const phi = (90 - lat) * Math.PI / 180
   const th  = lon * Math.PI / 180
-  // Direction est (azimut 90°) modulée par l'inclinaison
   const east = new THREE.Vector3(-Math.sin(th), 0, -Math.cos(th))
   const north = new THREE.Vector3(Math.cos(phi)*Math.cos(th), -Math.sin(phi), -Math.cos(phi)*Math.sin(th))
   return east.clone().multiplyScalar(Math.cos(inc)).add(north.clone().multiplyScalar(Math.sin(inc))).normalize()
@@ -113,8 +152,13 @@ function createEarthDay(): THREE.CanvasTexture {
 
 // ── Follow Cam ─────────────────────────────────────────────────────
 function FollowCamCanvas({ onClose, category, name, norad }: { onClose:()=>void; category:string; name:string; norad?:string }) {
+  const [texLoaded, setTexLoaded] = useState(false)
   const ref = useRef<HTMLCanvasElement>(null)
-  const { positions } = useSatStore()
+  const { positions, satellites } = useSatStore()
+  
+  const currentSat = (satellites || []).find((s: any) => s.norad === norad)
+  const flag = getFlag(currentSat?.country)
+  
   const posRef = useRef(norad ? positions[norad] : null)
   useEffect(() => { posRef.current = norad ? positions[norad] : null }, [positions, norad])
 
@@ -128,51 +172,50 @@ function FollowCamCanvas({ onClose, category, name, norad }: { onClose:()=>void;
     const scene = new THREE.Scene()
     const camera = new THREE.PerspectiveCamera(55, W/H, 0.001, 200000)
 
-    // Étoiles
     const sp: number[] = []
     for (let i=0; i<6000; i++) { const v=new THREE.Vector3().randomDirection().multiplyScalar(50000+Math.random()*50000); sp.push(v.x,v.y,v.z) }
     const sg=new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.Float32BufferAttribute(sp, 3))
     scene.add(new THREE.Points(sg, new THREE.PointsMaterial({ color:0xffffff, size:3, transparent:true, opacity:0.85 })))
 
-    // Terre
-    const earthGeo = new THREE.SphereGeometry(6371, 64, 64)
+    const earthGeo = new THREE.SphereGeometry(6371, 128, 128)
     const earthMat = new THREE.MeshPhongMaterial({ map: createEarthDay(), specular: new THREE.Color(0x224466), shininess: 12 })
     scene.add(new THREE.Mesh(earthGeo, earthMat))
     const tl = new THREE.TextureLoader(); tl.crossOrigin = 'anonymous'
-    tl.load('https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg', t => { earthMat.map=t; earthMat.needsUpdate=true }, undefined, () => {})
+    tl.load('/earth_day_8k.jpg', t => {
+      earthMat.map = t
+      t.anisotropy = renderer.capabilities.getMaxAnisotropy()
+      setTexLoaded(true)
+      earthMat.needsUpdate = true
+    }, undefined, () => {
+      tl.load('https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg', t => { earthMat.map=t; earthMat.needsUpdate=true })
+    })
     scene.add(new THREE.Mesh(new THREE.SphereGeometry(6440,64,64), new THREE.MeshBasicMaterial({ color:0x4488ff, transparent:true, opacity:0.12, side:THREE.BackSide })))
     scene.add(new THREE.Mesh(new THREE.SphereGeometry(6550,32,32), new THREE.MeshBasicMaterial({ color:0x1144aa, transparent:true, opacity:0.06, side:THREE.BackSide })))
 
-    // Lumières
     scene.add(new THREE.AmbientLight(0x334455, 1.2))
     const sunLight = new THREE.DirectionalLight(0xfff8e0, 4.0)
     sunLight.position.set(40000, 10000, 20000); scene.add(sunLight)
     const fillLight = new THREE.DirectionalLight(0x334466, 0.5)
     fillLight.position.set(-20000, -5000, -15000); scene.add(fillLight)
 
-    // Satellite — groupe de positionnement UNIQUEMENT (pas de rotation)
     const satGroup = new THREE.Group()
     scene.add(satGroup)
 
     const colorStr = (CAT_COLOR as Record<string,string>)[category] || '#00ccff'
     const isISS = norad === '25544' || name.includes('ISS')
     const gltfPath = getGltfPath(category, name, norad)
-
-    // Le modèle est dans un sous-groupe avec sa rotation intrinsèque fixe
     const modelGroup = new THREE.Group()
     satGroup.add(modelGroup)
 
     const loader = new GLTFLoader()
     if (gltfPath) {
-      loader.load(gltfPath, gltf => {
+      loader.load(gltfPath, (gltf: { scene: THREE.Group }) => {
         const m = gltf.scene
         const box = new THREE.Box3().setFromObject(m)
         const size = box.getSize(new THREE.Vector3()).length()
         const scale = (isISS ? 0.35 : 0.28) / size
         m.scale.set(scale, scale, scale)
-        // Centrer
         m.position.sub(box.getCenter(new THREE.Vector3()).multiplyScalar(scale))
-        // Correction intrinsèque GLTF (ne change JAMAIS)
         if (isISS) m.rotation.set(Math.PI, 0, Math.PI / 2)
         modelGroup.add(m)
       }, undefined, () => {
@@ -184,12 +227,10 @@ function FollowCamCanvas({ onClose, category, name, norad }: { onClose:()=>void;
       m.scale.set(0.3,0.3,0.3); modelGroup.add(m)
     }
 
-    // Inclinaison orbitale selon catégorie
     const inclination = category === 'station' ? 51.6 :
                         category === 'gps' ? 55.0 :
                         category === 'weather' ? 98.7 : 51.6
 
-    // Contrôles souris — orbite caméra autour du satellite
     let isDrag = false, lastX = 0, lastY = 0
     let camTheta = Math.PI * 1.2, camPhi = 0.25, camDist = 0.8
 
@@ -197,8 +238,8 @@ function FollowCamCanvas({ onClose, category, name, norad }: { onClose:()=>void;
     window.addEventListener('mouseup', () => { isDrag=false; canvas.style.cursor='grab' })
     canvas.addEventListener('mousemove', e => {
       if (!isDrag) return
-camTheta += (e.clientX-lastX)*0.006
-camPhi = Math.max(-Math.PI/2+0.05, Math.min(Math.PI/2-0.05, camPhi+(e.clientY-lastY)*0.004))
+      camTheta += (e.clientX-lastX)*0.006
+      camPhi = Math.max(-Math.PI/2+0.05, Math.min(Math.PI/2-0.05, camPhi+(e.clientY-lastY)*0.004))
       lastX=e.clientX; lastY=e.clientY
     })
     canvas.addEventListener('wheel', e => {
@@ -206,41 +247,26 @@ camPhi = Math.max(-Math.PI/2+0.05, Math.min(Math.PI/2-0.05, camPhi+(e.clientY-la
     }, { passive: true })
     canvas.style.cursor = 'grab'
 
-    // Quaternion cible pour smooth rotation
     const targetQuat = new THREE.Quaternion()
     const currentQuat = new THREE.Quaternion()
 
     let raf: number
     const animate = () => {
       raf = requestAnimationFrame(animate)
-
       const pos = posRef.current
       if (!pos || pos.alt <= 0) { renderer.render(scene, camera); return }
 
-      // Position réelle du satellite
       const satPos = geoToWorld(pos.lat, pos.lon, pos.alt)
-
-      // Vecteur radial (vers l'espace)
       const radial = satPos.clone().normalize()
-
-      // Direction tangentielle calculée analytiquement (stable, pas de jitter)
       const tangent = getOrbitalTangent(pos.lat, pos.lon, inclination)
-
-      // Vecteur lateral
       const right = new THREE.Vector3().crossVectors(tangent, radial).normalize()
 
-      // Positionner le groupe satellite (PAS de rotation sur satGroup)
       satGroup.position.copy(satPos)
-
-      // Orienter modelGroup vers la bonne direction orbitale
-      // en utilisant un quaternion lissé pour éviter les tremblements
       const rotMat = new THREE.Matrix4().makeBasis(right, radial, tangent)
       targetQuat.setFromRotationMatrix(rotMat)
-      currentQuat.slerp(targetQuat, 0.05) // interpolation douce
+      currentQuat.slerp(targetQuat, 0.05)
       modelGroup.setRotationFromQuaternion(currentQuat)
 
-      // Caméra : position sphérique autour du satellite
-      // en utilisant les vecteurs orbitaux comme base locale
       const cosP = Math.cos(camPhi)
       const camLocal = right.clone().multiplyScalar(Math.sin(camTheta) * cosP)
         .add(radial.clone().multiplyScalar(Math.sin(camPhi)))
@@ -250,7 +276,6 @@ camPhi = Math.max(-Math.PI/2+0.05, Math.min(Math.PI/2-0.05, camPhi+(e.clientY-la
       camera.position.copy(satPos).add(camLocal)
       camera.up.copy(radial)
       camera.lookAt(satPos)
-
       renderer.render(scene, camera)
     }
     animate()
@@ -267,13 +292,19 @@ camPhi = Math.max(-Math.PI/2+0.05, Math.min(Math.PI/2-0.05, camPhi+(e.clientY-la
 
   return (
     <div style={{ position:'fixed', inset:0, zIndex:99999, background:'#000005' }}>
+      {!texLoaded && (
+        <div style={{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center', zIndex:10 }}>
+          <div style={{ width:36, height:36, border:'2px solid rgba(255,255,255,0.15)', borderTop:'2px solid #fff', borderRadius:'50%', animation:'fspin 0.8s linear infinite' }} />
+          <style>{`@keyframes fspin{to{transform:rotate(360deg)}}`}</style>
+        </div>
+      )}
       <canvas ref={ref} style={{ display:'block', width:'100vw', height:'100vh' }} />
-      <div style={{ position:'absolute', top:20, left:'50%', transform:'translateX(-50%)', fontFamily:'Orbitron, sans-serif', fontSize:12, letterSpacing:4, color:'rgba(0,200,255,0.6)', pointerEvents:'none', textAlign:'center' }}>
-        {name.toUpperCase()} — FOLLOW CAM
-        <div style={{ fontSize:9, letterSpacing:3, color:'rgba(0,200,255,0.35)', marginTop:4 }}>POSITION EN TEMPS RÉEL · TLE SGP4</div>
+      <div style={{ position:'absolute', top:20, left:'50%', transform:'translateX(-50%)', fontFamily:'Orbitron, sans-serif', fontSize:12, letterSpacing:4, color:'rgba(0,200,255,0.6)', pointerEvents:'none', textAlign:'center', display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ fontSize: 16 }}>{flag}</span> {name.toUpperCase()} — FOLLOW CAM
+        <div style={{ fontSize:9, letterSpacing:3, color:'rgba(0,200,255,0.35)', marginTop:4, position: 'absolute', top: '100%', width: '100%' }}>POSITION EN TEMPS RÉEL · TLE SGP4</div>
       </div>
       <div style={{ position:'absolute', top:16, left:20, fontSize:9, color:'rgba(0,180,255,0.4)', letterSpacing:1.5, fontFamily:'Share Tech Mono, monospace', lineHeight:1.8, pointerEvents:'none' }}>
-        {name} · NORAD {norad||'—'}<br/>VITESSE ~7.66 KM/S<br/>CATÉGORIE : {category.toUpperCase()}
+        <span style={{ fontSize: 12 }}>{flag}</span> {name} · NORAD {norad||'—'}<br/>VITESSE ~7.66 KM/S<br/>CATÉGORIE : {category.toUpperCase()}
       </div>
       <div style={{ position:'absolute', bottom:50, right:20, fontSize:8, color:'rgba(0,180,255,0.3)', letterSpacing:1, fontFamily:'Share Tech Mono, monospace', textAlign:'right', pointerEvents:'none', lineHeight:1.8 }}>
         DRAG — Orbiter autour du satellite<br/>SCROLL — Zoom
@@ -291,6 +322,10 @@ export default function SatelliteViewer3D({ category, name, norad }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [followOpen, setFollowOpen] = useState(false)
 
+  const { satellites } = useSatStore()
+  const currentSat = (satellites || []).find((s: any) => s.norad === norad)
+  const displayDate = currentSat?.launch_date || currentSat?.launchDate
+
   useEffect(() => {
     if (!canvasRef.current) return
     const canvas = canvasRef.current
@@ -301,6 +336,7 @@ export default function SatelliteViewer3D({ category, name, norad }: Props) {
     const scene = new THREE.Scene()
     const camera = new THREE.PerspectiveCamera(40, W/H, 0.01, 100)
     camera.position.set(0, 0.5, 2.8); camera.lookAt(0, 0, 0)
+    
     const sp: number[] = []
     for (let i=0; i<300; i++) { const v=new THREE.Vector3().randomDirection().multiplyScalar(20); sp.push(v.x,v.y,v.z) }
     const sg=new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.Float32BufferAttribute(sp, 3))
@@ -309,12 +345,14 @@ export default function SatelliteViewer3D({ category, name, norad }: Props) {
     const sun=new THREE.DirectionalLight(0xfff5e0, 2.5); sun.position.set(5,3,5); scene.add(sun)
     const color=(CAT_COLOR as Record<string,string>)[category]||'#00ccff'
     const catLight=new THREE.PointLight(new THREE.Color(color), 0.5, 10); catLight.position.set(0,2,2); scene.add(catLight)
+    
     const gltfPath = getGltfPath(category, name, norad)
-let model: THREE.Object3D = new THREE.Group() // vide au départ
-scene.add(model)
-if (gltfPath) {
-  new GLTFLoader().load(gltfPath, gltf => {
-    scene.remove(model); model = gltf.scene
+    let model: THREE.Object3D = new THREE.Group()
+    scene.add(model)
+    
+    if (gltfPath) {
+      new GLTFLoader().load(gltfPath, (gltf: { scene: THREE.Group }) => {
+        scene.remove(model); model = gltf.scene
         const box = new THREE.Box3().setFromObject(model)
         const size = box.getSize(new THREE.Vector3()).length()
         const isISS = norad==='25544'||name.includes('ISS')
@@ -323,17 +361,46 @@ if (gltfPath) {
         model.position.sub(box.getCenter(new THREE.Vector3()).multiplyScalar(scale))
         scene.add(model)
       }, undefined, () => {})
+    } else {
+        scene.remove(model); 
+        model = buildModel(category, color);
+        scene.add(model);
     }
+    
     let raf: number, t = 0
-    const animate = () => { raf=requestAnimationFrame(animate); t+=0.008; model.rotation.y=t; model.rotation.x=Math.sin(t*0.3)*0.1; renderer.render(scene,camera) }
+    const animate = () => { 
+        raf=requestAnimationFrame(animate); 
+        t+=0.008; 
+        if (model) {
+            model.rotation.y=t; 
+            model.rotation.x=Math.sin(t*0.3)*0.1; 
+        }
+        renderer.render(scene,camera) 
+    }
     animate()
     return () => { cancelAnimationFrame(raf); renderer.dispose() }
   }, [category, name, norad])
 
   return (
     <>
-      <div style={{ position:'relative' }}>
-        <canvas ref={canvasRef} style={{ display:'block', width:'100%', height:160, borderRadius:'8px 8px 0 0' }} />
+      <div style={{ position:'relative', background: '#000814', borderRadius: '8px 8px 0 0' }}>
+        <canvas ref={canvasRef} style={{ display:'block', width:'100%', height:160 }} />
+        
+        <div style={{ position: 'absolute', top: 12, right: 12, textAlign: 'right', pointerEvents: 'none' }}>
+            {/* L'émoji du drapeau ajouté juste au-dessus du statut */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                <span style={{ fontSize: 16 }}>{getFlag(currentSat?.country)}</span>
+                <div style={{ fontSize: 7, color: 'rgba(0,255,200,0.4)', letterSpacing: 1.5, fontFamily: 'Share Tech Mono, monospace' }}>LAUNCH STATUS</div>
+            </div>
+            
+            <div style={{ fontSize: 11, color: '#00ffcc', fontFamily: 'Share Tech Mono, monospace', fontWeight: 'bold' }}>
+                {getLaunchAge(currentSat)}
+            </div>
+            <div style={{ fontSize: 8, color: 'rgba(255,255,255,0.3)', fontFamily: 'Share Tech Mono, monospace', marginTop: 2 }}>
+                {displayDate || 'NOT FOUND'}
+            </div>
+        </div>
+
         <button onClick={() => setFollowOpen(true)} style={{ position:'absolute', bottom:8, left:8, padding:'3px 10px', fontSize:8, letterSpacing:1, cursor:'pointer', border:'1px solid #00ffcc', borderRadius:3, fontFamily:'inherit', background:'rgba(0,255,200,0.1)', color:'#00ffcc' }}>
           🛸 FOLLOW CAM
         </button>
