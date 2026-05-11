@@ -17,3 +17,13 @@ html, body {
   width: 100%;
   min-height: 100%;
 }
+
+.nav-tabs-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.nav-tabs-scroll::-webkit-scrollbar {
+  display: none;
+}

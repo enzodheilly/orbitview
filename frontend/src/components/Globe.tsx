@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, forwardRef, useImperativeHandle } from 'react'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { useSatStore } from '../store/satelliteStore'
@@ -78,13 +78,38 @@ const CAT_RGB:Record<string,[number,number,number]>={
 
 type CatPoints={points:THREE.Points;sats:SatelliteDTO[];posArr:Float32Array;geo:THREE.BufferGeometry}
 
-export default function Globe({preloadedSats,showDebrisCloud=false,reentryMode=false,reentryList=[]}:{preloadedSats?:SatelliteDTO[];showDebrisCloud?:boolean;reentryMode?:boolean;reentryList?:any[]}){
+export interface GlobeHandle {
+  zoomIn: () => void
+  zoomOut: () => void
+  reset: () => void
+}
+
+const Globe = forwardRef<GlobeHandle, {
+  preloadedSats?:SatelliteDTO[];
+  showDebrisCloud?:boolean;
+  reentryMode?:boolean;
+  reentryList?:any[];
+  autoRotate?:boolean;
+  liteMode?:boolean;
+  satSize?:'small'|'medium'|'large';
+  showAtmosphere?:boolean;
+  showGrid?:boolean;
+}>(function Globe({
+  preloadedSats,showDebrisCloud=false,reentryMode=false,reentryList=[],
+  autoRotate=true,liteMode=false,satSize='small',showAtmosphere=true,showGrid=true
+}, ref){
   const canvasRef=useRef<HTMLCanvasElement>(null)
   const sceneRef=useRef<THREE.Scene|null>(null)
   const rendererRef=useRef<THREE.WebGLRenderer|null>(null)
   const cameraRef=useRef<THREE.PerspectiveCamera|null>(null)
-  const sphRef=useRef({theta:0.4,phi:1.2,r:3.0})
+  const sphRef=useRef({theta:0.4,phi:1.2,r:6.0})
   const animTargetRef=useRef<{theta:number;phi:number;r:number}|null>(null)
+
+  useImperativeHandle(ref, () => ({
+    zoomIn:  () => { animTargetRef.current = { ...sphRef.current, r: Math.max(1.8, sphRef.current.r - 1.2) } },
+    zoomOut: () => { animTargetRef.current = { ...sphRef.current, r: Math.min(12,  sphRef.current.r + 1.2) } },
+    reset:   () => { animTargetRef.current = { theta: 0.4, phi: 1.2, r: 6.0 } },
+  }))
   const earthUniformsRef=useRef<any>(null)
   const sunLightRef=useRef<THREE.DirectionalLight|null>(null)
   const sunMoonRef=useRef<THREE.Group|null>(null)
@@ -98,7 +123,12 @@ export default function Globe({preloadedSats,showDebrisCloud=false,reentryMode=f
   const visibleRingsRef=useRef<THREE.Group|null>(null)
   const padMarkerRef=useRef<THREE.Sprite|null>(null)
   const alertPointsRef=useRef<THREE.Points|null>(null)
-  
+  const atmosphereRef=useRef<THREE.Mesh|null>(null)
+  const gridGroupRef=useRef<THREE.Group|null>(null)
+  const starsRef=useRef<THREE.Points|null>(null)
+  const autoRotateRef=useRef(autoRotate)
+  const satSizeRef=useRef(satSize)
+
   const catPointsRef=useRef<Map<string,CatPoints>>(new Map())
   const localPosRef=useRef<Record<string,{lat:number;lon:number;alt:number;vx:number;vy:number;vz:number}>>({})
 
@@ -116,31 +146,33 @@ export default function Globe({preloadedSats,showDebrisCloud=false,reentryMode=f
     const sp:number[]=[]
     for(let i=0;i<8000;i++){const v=new THREE.Vector3().randomDirection().multiplyScalar(80+Math.random()*120);sp.push(v.x,v.y,v.z)}
     const sg=new THREE.BufferGeometry();sg.setAttribute('position',new THREE.Float32BufferAttribute(sp,3))
-    scene.add(new THREE.Points(sg,new THREE.PointsMaterial({color:0xffffff,size:0.08,transparent:true,opacity:0.8})))
+    const starPts=new THREE.Points(sg,new THREE.PointsMaterial({color:0xffffff,size:0.08,transparent:true,opacity:0.8}))
+    starsRef.current=starPts;scene.add(starPts)
 
+    const gridGroup=new THREE.Group();gridGroupRef.current=gridGroup;scene.add(gridGroup)
     const gmat=new THREE.LineBasicMaterial({color:0x1a4060,transparent:true,opacity:0.15}),GR=1.002
-    for(let lat=-60;lat<=60;lat+=30){const pts:THREE.Vector3[]=[],phi=(90-lat)*Math.PI/180;for(let i=0;i<=64;i++){const th=(i/64)*2*Math.PI;pts.push(new THREE.Vector3(GR*Math.sin(phi)*Math.cos(th),GR*Math.cos(phi),-GR*Math.sin(phi)*Math.sin(th)))}scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),gmat))}
-    for(let lon=0;lon<360;lon+=30){const pts:THREE.Vector3[]=[],th=lon*Math.PI/180;for(let i=0;i<=64;i++){const phi=(i/64)*Math.PI;pts.push(new THREE.Vector3(GR*Math.sin(phi)*Math.cos(th),GR*Math.cos(phi),-GR*Math.sin(phi)*Math.sin(th)))}scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),gmat))}
+    for(let lat=-60;lat<=60;lat+=30){const pts:THREE.Vector3[]=[],phi=(90-lat)*Math.PI/180;for(let i=0;i<=64;i++){const th=(i/64)*2*Math.PI;pts.push(new THREE.Vector3(GR*Math.sin(phi)*Math.cos(th),GR*Math.cos(phi),-GR*Math.sin(phi)*Math.sin(th)))}gridGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),gmat))}
+    for(let lon=0;lon<360;lon+=30){const pts:THREE.Vector3[]=[],th=lon*Math.PI/180;for(let i=0;i<=64;i++){const phi=(i/64)*Math.PI;pts.push(new THREE.Vector3(GR*Math.sin(phi)*Math.cos(th),GR*Math.cos(phi),-GR*Math.sin(phi)*Math.sin(th)))}gridGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),gmat))}
 
     const sd=getSunDir(new Date())
     const uniforms={dayTexture:{value:new THREE.Texture()},nightTexture:{value:new THREE.Texture()},sunDirection:{value:sd}}
     earthUniformsRef.current=uniforms
     scene.add(new THREE.Mesh(new THREE.SphereGeometry(1,64,64),new THREE.ShaderMaterial({uniforms,vertexShader:earthVert,fragmentShader:earthFrag})))
-    scene.add(new THREE.Mesh(new THREE.SphereGeometry(1.015,64,64),new THREE.ShaderMaterial({vertexShader:`varying vec3 vN;void main(){vN=normalize(normalMatrix*normal);gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,fragmentShader:`varying vec3 vN;void main(){float i=pow(0.6-dot(vN,vec3(0,0,1)),2.0);gl_FragColor=vec4(0.1,0.4,1.0,1.0)*i*0.8;}`,transparent:true,side:THREE.FrontSide,depthWrite:false})))
+    const atmoMesh=new THREE.Mesh(new THREE.SphereGeometry(1.015,64,64),new THREE.ShaderMaterial({vertexShader:`varying vec3 vN;void main(){vN=normalize(normalMatrix*normal);gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,fragmentShader:`varying vec3 vN;void main(){float i=pow(0.6-dot(vN,vec3(0,0,1)),2.0);gl_FragColor=vec4(0.1,0.4,1.0,1.0)*i*0.8;}`,transparent:true,side:THREE.FrontSide,depthWrite:false}))
+    atmosphereRef.current=atmoMesh;scene.add(atmoMesh)
     const sunLight=new THREE.DirectionalLight(0xfff5e0,2.0);sunLight.position.copy(sd.clone().multiplyScalar(10));sunLightRef.current=sunLight;scene.add(sunLight);scene.add(new THREE.AmbientLight(0x112233,0.4))
     const tl=new THREE.TextureLoader()
-    const applyTex=(tex:THREE.Texture,uniform:{value:THREE.Texture},label:string)=>{
+    tl.crossOrigin='anonymous'
+    const applyTex=(tex:THREE.Texture,uniform:{value:THREE.Texture})=>{
       tex.anisotropy=renderer.capabilities.getMaxAnisotropy();tex.colorSpace=THREE.SRGBColorSpace;uniform.value=tex
-      console.log(`[Globe] ${label} texture loaded OK`)
     }
-    const loadTex=(url:string,fallback:string,uniform:{value:THREE.Texture},label:string)=>{
-      tl.load(url,(tex)=>applyTex(tex,uniform,label),undefined,()=>{
-        console.warn(`[Globe] ${label} primary failed, trying fallback`)
-        tl.load(fallback,(tex)=>applyTex(tex,uniform,label+' fallback'),undefined,()=>console.error(`[Globe] ${label} fallback also failed`))
+    const loadTex=(url:string,fallback:string,uniform:{value:THREE.Texture})=>{
+      tl.load(url,(tex)=>applyTex(tex,uniform),undefined,()=>{
+        tl.load(fallback,(tex)=>applyTex(tex,uniform),undefined,()=>{})
       })
     }
-    loadTex(DAY_TEX_URL,DAY_TEX_FALLBACK,uniforms.dayTexture,'day')
-    loadTex(NIGHT_TEX_URL,NIGHT_TEX_FALLBACK,uniforms.nightTexture,'night')
+    loadTex(DAY_TEX_URL,DAY_TEX_FALLBACK,uniforms.dayTexture)
+    loadTex(NIGHT_TEX_URL,NIGHT_TEX_FALLBACK,uniforms.nightTexture)
 
     const sunGroup=new THREE.Group();sunMoonRef.current=sunGroup;scene.add(sunGroup)
     const now=new Date(),sun=getSunLatLon(now),moon=getMoonLatLon(now)
@@ -186,7 +218,7 @@ export default function Globe({preloadedSats,showDebrisCloud=false,reentryMode=f
     let raf=0,frame=0
     const animate=()=>{
       raf=requestAnimationFrame(animate);frame++
-      if(!isDrag&&!animTargetRef.current)sphRef.current.theta+=0.00003
+      if(!isDrag&&!animTargetRef.current&&autoRotateRef.current)sphRef.current.theta+=0.00003
       if(animTargetRef.current){const t=animTargetRef.current,spd=0.08;sphRef.current.theta+=(t.theta-sphRef.current.theta)*spd;sphRef.current.phi+=(t.phi-sphRef.current.phi)*spd;sphRef.current.r+=(t.r-sphRef.current.r)*spd;if(Math.abs(t.theta-sphRef.current.theta)<0.001&&Math.abs(t.phi-sphRef.current.phi)<0.001)animTargetRef.current=null}
       if(frame%60===0){
         const newSd=getSunDir(new Date()) // Utilise le ECEF corrigé !
@@ -200,6 +232,30 @@ export default function Globe({preloadedSats,showDebrisCloud=false,reentryMode=f
     animate()
     return()=>{cancelAnimationFrame(raf);ro.disconnect();renderer.dispose()}
   },[])
+
+  useEffect(()=>{ autoRotateRef.current=autoRotate },[autoRotate])
+  useEffect(()=>{ satSizeRef.current=satSize },[satSize])
+  useEffect(()=>{ if(atmosphereRef.current)atmosphereRef.current.visible=showAtmosphere },[showAtmosphere])
+  useEffect(()=>{ if(gridGroupRef.current)gridGroupRef.current.visible=showGrid },[showGrid])
+  useEffect(()=>{
+    const mul=satSize==='large'?2.5:satSize==='medium'?1.6:1
+    catPointsRef.current.forEach(cp=>{
+      const mat=cp.points.material as THREE.PointsMaterial
+      const base=cp.points.userData.isDebris?0.025:0.012
+      mat.size=base*mul;mat.needsUpdate=true
+    })
+  },[satSize])
+  useEffect(()=>{
+    if(liteMode){
+      if(atmosphereRef.current)atmosphereRef.current.visible=false
+      if(starsRef.current)starsRef.current.visible=false
+      if(sunMoonRef.current)sunMoonRef.current.visible=false
+    }else{
+      if(atmosphereRef.current)atmosphereRef.current.visible=showAtmosphere
+      if(starsRef.current)starsRef.current.visible=true
+      if(sunMoonRef.current)sunMoonRef.current.visible=true
+    }
+  },[liteMode,showAtmosphere])
 
   useEffect(()=>{
     const scene=sceneRef.current;if(!scene)return
@@ -249,8 +305,11 @@ export default function Globe({preloadedSats,showDebrisCloud=false,reentryMode=f
     const worker=new Worker('/propagate.worker.js')
 
     const doUpdate=()=>{
-      const allSats=[...catPointsRef.current.values()].flatMap(cp=>cp.sats)
-      worker.postMessage({sats:allSats,timestamp:Date.now()})
+      // Send only norad+tle — avoids serializing 10MB of full objects every tick
+      const slim=[...catPointsRef.current.values()].flatMap(cp=>
+        cp.sats.map((s:any)=>({norad:s.norad,tle:s.tle}))
+      )
+      worker.postMessage({sats:slim,timestamp:Date.now()})
     }
 
     worker.onmessage=(e:MessageEvent)=>{
@@ -272,8 +331,8 @@ export default function Globe({preloadedSats,showDebrisCloud=false,reentryMode=f
       if(sel&&results[sel])updatePosition(sel,results[sel])
     }
 
-    setTimeout(doUpdate,1000)
-    const interval=setInterval(doUpdate,30000)
+    setTimeout(doUpdate,2000)
+    const interval=setInterval(doUpdate,60000) // 60s — visually indistinguishable from 30s at globe scale
     return()=>{clearInterval(interval);worker.terminate()}
   },[preloadedSats,satellites])
 
@@ -434,4 +493,6 @@ export default function Globe({preloadedSats,showDebrisCloud=false,reentryMode=f
   },[alertMode,alertNoradColors])
 
   return <canvas ref={canvasRef} style={{display:'block',width:'100%',height:'100%',cursor:'grab'}} />
-}
+})
+
+export default Globe

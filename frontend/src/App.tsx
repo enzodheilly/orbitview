@@ -3,13 +3,19 @@ import * as satellite from 'satellite.js'
 import { useConjunctionAlerts } from './hooks/useConjunctionAlerts'
 import type { ConjunctionAlert } from './hooks/useConjunctionAlerts'
 import { useVisibility } from './hooks/useVisibility'
-import Globe from './components/Globe'
+import Globe, { type GlobeHandle } from './components/Globe'
 import SatelliteImage from './components/SatelliteImage'
 import SpaceDashboard from './components/SpaceDashboard'
 import { useSatStore } from './store/satelliteStore'
+import { useSettings, T, TIMEZONES } from './store/settingsStore'
 import { CAT_COLOR, CAT_LABEL, type SatCategory } from './types'
 import { getUpcomingLaunches } from "./api/launch"
 import type { Launch } from "./types/launch"
+import ApodPanel from './components/panels/ApodPanel'
+import NeoPanel from './components/panels/NeoPanel'
+import JwstPanel from './components/panels/JwstPanel'
+import MoonPanel from './components/panels/MoonPanel'
+import SolarFlaresPanel from './components/panels/SolarFlaresPanel'
 
 // 🔍 Détection de l'activité du satellite
 function isSatelliteActive(sat: any) {
@@ -75,11 +81,16 @@ function Countdown({ date }: { date: string }) {
 const glass = { background: 'rgba(4,8,20,0.82)', backdropFilter: 'blur(24px)', border: '1px solid rgba(0,229,255,0.12)', boxShadow: '0 8px 40px rgba(0,0,0,0.6)' }
 
 
-type Panel = 'satellites' | 'missions' | 'alerts' | 'position' | 'weather' | 'crew' | 'news' | 'reentry' | 'history' | null
+type Panel = 'satellites' | 'missions' | 'alerts' | 'position' | 'weather' | 'crew' | 'news' | 'reentry' | 'history' | 'apod' | 'neo' | 'jwst' | 'moon' | 'solarflares' | null
 
 export default function App() { // ⬅️ DEVENU APP()
   const { satellites, positions, selectedNorad, activeFilters, selectSat, toggleFilter, setTarget, setConjunctionPair, setUserPosition, setVisibleNorads, setAlertMode, setAlertNoradColors } = useSatStore()
-  
+  const { timezone, language, liteMode, darkMode, autoRotate, satSize, showAtmosphere, showGrid, update: updateSettings } = useSettings()
+  const t = T[language]
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false)
+  const [globeMaximized, setGlobeMaximized] = useState(false)
+
   const [clock, setClock] = useState('')
   const [launches, setLaunches] = useState<Launch[]>([])
   const [loadingLaunches, setLoadingLaunches] = useState(true)
@@ -88,7 +99,7 @@ export default function App() { // ⬅️ DEVENU APP()
   const [loadingDetail, setLoadingDetail] = useState(false)
   const [liveVideoId, setLiveVideoId] = useState<string | null>(null)
   const [liveVideoTitle, setLiveVideoTitle] = useState<string>('')
-  const [openPanel, setOpenPanel] = useState<Panel>(null)
+  const [openPanel, setOpenPanel] = useState<Panel>('satellites')
   
   const [reentryList, setReentryList] = useState<any[]>([])
   const [historyList, setHistoryList] = useState<Launch[]>([])
@@ -102,18 +113,27 @@ export default function App() { // ⬅️ DEVENU APP()
 
   const [searchQuery, setSearchQuery] = useState('')
   const [countryFilter, setCountryFilter] = useState('ALL')
-  const [navSearch, setNavSearch] = useState('')
-  const [navSearchFocused, setNavSearchFocused] = useState(false)
   
   const [livePos, setLivePos] = useState<{lat:number,lon:number,alt:number,vel:number}|null>(null)
   const [selectedAlert, setSelectedAlert] = useState<ConjunctionAlert | null>(null)
   const [solarWind, setSolarWind] = useState<{speed: number, density: number} | null>(null)
   const [nasaLiveId, setNasaLiveId] = useState<string | null>(null)
+  const [_esaLiveId, setEsaLiveId] = useState<string | null>(null)
+  const [_spacexLiveId, setSpacexLiveId] = useState<string | null>(null)
+  const [_worldcamLiveId, setWorldcamLiveId] = useState<string | null>(null)
+  const [_senLiveId, setSenLiveId] = useState<string | null>(null)
+  const [_afarLiveId, setAfarLiveId] = useState<string | null>(null)
 
   const conjunctionAlerts = useConjunctionAlerts(60)
-  const { userPos, passes } = useVisibility(10)
+  const { userPos, passes, loading: visLoading, error: visError, requestLocation } = useVisibility(10)
 
   const globeContainerRef = useRef<HTMLDivElement>(null)
+  const globeWrapperRef = useRef<HTMLDivElement>(null)
+  const globeRef = useRef<GlobeHandle>(null)
+  const _satFetchStarted = useRef(false)
+  const _ytFetchStarted = useRef(false)
+  const _llFetchStarted = useRef(false)
+  const locationEnabledRef = useRef(false)
 
   const [dashboardVh, setDashboardVh] = useState(42)
   const globeVh = 100 - dashboardVh
@@ -136,34 +156,63 @@ export default function App() { // ⬅️ DEVENU APP()
   }
 
   useEffect(() => {
-    const cats = ['starlink', 'science', 'weather', 'telephonie', 'gps', 'station']
-    ;(async () => {
-      let allSats: any[] = []
-      for (const cat of cats) {
-        try {
-          let offset = 0
-          while (true) {
-            const res = await fetch(`/api/satellites/category/${cat}?limit=500&offset=${offset}`)
-            const json = await res.json()
-            const batch = json.data || []
-            if (!batch.length) break
-            allSats = [...allSats, ...batch]
-            if (batch.length < 500) break
-            offset += 500
-          }
-        } catch { /* skip failed category */ }
-      }
-      if (!allSats.length) return
-      await new Promise<void>(resolve => {
+    if (_satFetchStarted.current) return
+    _satFetchStarted.current = true
+
+    const CACHE_KEY = 'spacemonitor_sats_v2'
+    const CACHE_TTL = 4 * 3600 * 1000
+
+    const propagateAndApply = (sats: any[]): Promise<any[]> =>
+      new Promise(resolve => {
         const w = new Worker('/propagate.worker.js')
-        w.postMessage({ sats: allSats, timestamp: Date.now() })
-        w.onmessage = e => {
-          allSats.forEach(s => { if (e.data[s.norad]) s._pos = e.data[s.norad] })
-          w.terminate()
-          resolve()
-        }
+        w.postMessage({ sats, timestamp: Date.now() })
+        w.onmessage = e => { sats.forEach(s => { if (e.data[s.norad]) s._pos = e.data[s.norad] }); w.terminate(); resolve(sats) }
+        w.onerror = () => { w.terminate(); resolve(sats) }
       })
-      useSatStore.setState({ satellites: allSats })
+
+    ;(async () => {
+      try {
+        const raw = localStorage.getItem(CACHE_KEY)
+        if (raw) {
+          const { data, ts } = JSON.parse(raw)
+          if (Date.now() - ts < CACHE_TTL && Array.isArray(data) && data.length > 10) { useSatStore.setState({ satellites: data }); return }
+        }
+      } catch { /* stale */ }
+
+      const cats = ['starlink', 'science', 'weather', 'telephonie', 'gps', 'station']
+      const firstPages = await Promise.all(cats.map(async cat => {
+        try {
+          const res = await fetch(`/api/satellites/category/${cat}?limit=500&offset=0`)
+          const json = await res.json()
+          const batch = (json.data || []) as any[]
+          return { cat, batch, hasMore: batch.length >= 500 }
+        } catch { return { cat, batch: [] as any[], hasMore: false } }
+      }))
+
+      const firstBatch = firstPages.flatMap(p => p.batch)
+      if (firstBatch.length > 0) { await propagateAndApply(firstBatch); useSatStore.setState({ satellites: [...firstBatch] }) }
+
+      const extraBatches = await Promise.all(firstPages.filter(p => p.hasMore).map(async ({ cat, batch: first }) => {
+        const all = [...first]; let offset = 500
+        while (true) {
+          try {
+            const res = await fetch(`/api/satellites/category/${cat}?limit=500&offset=${offset}`)
+            const json = await res.json(); const page: any[] = json.data || []
+            if (!page.length) break; all.push(...page); if (page.length < 500) break; offset += 500
+          } catch { break }
+        }
+        return all.slice(first.length)
+      }))
+
+      const extraSats = extraBatches.flat()
+      if (extraSats.length > 0) {
+        await propagateAndApply(extraSats)
+        const allSats = [...firstBatch, ...extraSats]
+        useSatStore.setState({ satellites: allSats })
+        try { localStorage.setItem(CACHE_KEY, JSON.stringify({ data: allSats, ts: Date.now() })) } catch { /* quota */ }
+      } else if (firstBatch.length > 0) {
+        try { localStorage.setItem(CACHE_KEY, JSON.stringify({ data: firstBatch, ts: Date.now() })) } catch { /* quota */ }
+      }
     })()
   }, [])
 
@@ -176,14 +225,23 @@ export default function App() { // ⬅️ DEVENU APP()
     }
   }, [satellites])
 
-  // REQUÊTES API ANNEXES (S'exécutent en arrière-plan pendant le LoadingScreen)
+  // REQUÊTES API ANNEXES
   useEffect(() => {
+    if (_llFetchStarted.current) return
+    _llFetchStarted.current = true
+
     const since = new Date(Date.now() - 30*24*3600000).toISOString()
+    const LL_CACHE_KEY = 'spacemonitor_ll_history_v2'
+    const LL_TTL = 2 * 3600 * 1000
     setLoadingHistory(true)
-    fetch(`https://ll.thespacedevs.com/2.2.0/launch/?limit=10&ordering=-net&net__gte=${since}`)
-      .then(r => r.json())
-      .then(d => setHistoryList((d.results||[]).map((l: any) => ({ mission_name: l.name, provider: l.launch_service_provider?.name, date: l.net, rocket: l.rocket?.configuration?.name, pad: l.pad?.name, status: l.status?.name }))))
-      .catch(() => {}).finally(() => setLoadingHistory(false))
+    const cachedLL = (() => { try { const r = localStorage.getItem(LL_CACHE_KEY); if (!r) return null; const { data, ts } = JSON.parse(r); return Date.now() - ts < LL_TTL ? data : null } catch { return null } })()
+    if (cachedLL) { setHistoryList(cachedLL); setLoadingHistory(false) }
+    else {
+      fetch(`https://ll.thespacedevs.com/2.2.0/launch/?limit=10&ordering=-net&net__gte=${since}`)
+        .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.json() })
+        .then(d => { const list = (d.results||[]).map((l: any) => ({ mission_name: l.name, provider: l.launch_service_provider?.name, date: l.net, rocket: l.rocket?.configuration?.name, pad: l.pad?.name, status: l.status?.name })); setHistoryList(list); try { localStorage.setItem(LL_CACHE_KEY, JSON.stringify({ data: list, ts: Date.now() })) } catch { /* ignore */ } })
+        .catch(() => {}).finally(() => setLoadingHistory(false))
+    }
 
     fetch('http://localhost:8080/api/debris/with-tle?reentry_only=true&limit=20')
       .then(r => r.json())
@@ -221,13 +279,79 @@ export default function App() { // ⬅️ DEVENU APP()
       .finally(() => setLoadingNews(false))
 
     getUpcomingLaunches().then(d => { if (Array.isArray(d)) setLaunches(d) }).catch(() => setLaunches([])).finally(() => setLoadingLaunches(false))
+
+    // Fetch solar flares (30 derniers jours) avec cache
+    try {
+      const FLARES_KEY = 'spacemonitor_flares_v1'
+      const FLARES_TTL = 2 * 60 * 60 * 1000
+      const raw = localStorage.getItem(FLARES_KEY)
+      if (raw) {
+        const { ts } = JSON.parse(raw)
+        if (Date.now() - ts < FLARES_TTL) { /* cache warm */ }
+        else { throw new Error('expired') }
+      } else { throw new Error('no cache') }
+    } catch {
+      const startDate = new Date(Date.now() - 30 * 24 * 3600000).toISOString().split('T')[0]
+      const endDate = new Date().toISOString().split('T')[0]
+      fetch(`https://api.nasa.gov/DONKI/FLR?startDate=${startDate}&endDate=${endDate}&api_key=DEMO_KEY`)
+        .then(r => r.json())
+        .then(d => {
+          const arr = Array.isArray(d) ? d : []
+          try { localStorage.setItem('spacemonitor_flares_v1', JSON.stringify({ data: arr, ts: Date.now() })) } catch { /* quota */ }
+        })
+        .catch(() => {})
+    }
   }, [])
 
   useEffect(() => {
     const i = setInterval(() => {
-      const n = new Date(); const p = (x: number) => String(x).padStart(2, '0')
-      setClock(`${p(n.getUTCHours())}:${p(n.getUTCMinutes())}:${p(n.getUTCSeconds())}`)
+      const n = new Date()
+      if (timezone === 'UTC') {
+        const p = (x: number) => String(x).padStart(2, '0')
+        setClock(`${p(n.getUTCHours())}:${p(n.getUTCMinutes())}:${p(n.getUTCSeconds())}`)
+      } else {
+        setClock(new Intl.DateTimeFormat('fr-FR', { hour:'2-digit', minute:'2-digit', second:'2-digit', timeZone: timezone, hour12: false }).format(n))
+      }
     }, 1000); return () => clearInterval(i)
+  }, [timezone])
+
+  useEffect(() => {
+    if (_ytFetchStarted.current) return
+    _ytFetchStarted.current = true
+    const key = import.meta.env.VITE_YOUTUBE_API_KEY
+    if (!key) return
+    const YT_CACHE_KEY = 'spacemonitor_yt_live_v1'
+    const YT_TTL_OK = 30 * 60 * 1000
+    const YT_TTL_FAIL = 2 * 3600 * 1000
+    try {
+      const raw = sessionStorage.getItem(YT_CACHE_KEY)
+      if (raw) {
+        const { data, ts, failed } = JSON.parse(raw)
+        if (Date.now() - ts < (failed ? YT_TTL_FAIL : YT_TTL_OK)) {
+          if (data.nasa) setNasaLiveId(data.nasa)
+          if (data.esa) setEsaLiveId(data.esa)
+          if (data.spacex) setSpacexLiveId(data.spacex)
+          if (data.worldcam) setWorldcamLiveId(data.worldcam)
+          if (data.sen) setSenLiveId(data.sen)
+          if (data.afar) setAfarLiveId(data.afar)
+          return
+        }
+      }
+    } catch { /* ignore */ }
+    const fetchLive = (channelId: string): Promise<string|null> =>
+      fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&channelId=${channelId}&eventType=live&type=video&maxResults=1&key=${key}`)
+        .then(r => r.ok ? r.json() : null).then((d: any) => d?.items?.[0]?.id?.videoId ?? null).catch(()=>null)
+    ;(async () => {
+      const [nasa, esa, spacex, worldcam, sen, afar] = await Promise.all([
+        fetchLive('UCLA_DiR1FfKNvjuUpBHmylQ'), fetchLive('UCIBaDdAbGlFDeS-wVwVnlWQ'),
+        fetchLive('UCtI0Hodo5o5dUb67FeUjDeA'), fetchLive('UCNrGOnduIS9BXIRmDcHasZA'),
+        fetchLive('UCEWHPFNilbO98bnchOzB-4g'), fetchLive('UCaG0IHN1RMOZ4-U3wDXAkwA'),
+      ])
+      if (nasa) setNasaLiveId(nasa); if (esa) setEsaLiveId(esa); if (spacex) setSpacexLiveId(spacex)
+      if (worldcam) setWorldcamLiveId(worldcam); if (sen) setSenLiveId(sen); if (afar) setAfarLiveId(afar)
+      const allFailed = [nasa,esa,spacex,worldcam,sen,afar].every(v=>v===null)
+      try { sessionStorage.setItem(YT_CACHE_KEY, JSON.stringify({ data:{nasa,esa,spacex,worldcam,sen,afar}, ts:Date.now(), failed:allFailed })) } catch { /* ignore */ }
+    })()
   }, [])
 
   useEffect(() => {
@@ -238,7 +362,6 @@ export default function App() { // ⬅️ DEVENU APP()
   }, [userPos])
 
   const prevVisibleRef = useRef<string>('')
-  const locationEnabledRef = useRef(false)
   useEffect(() => {
     if (userPos && passes.length > 0 && locationEnabledRef.current) {
       const visible = passes.filter(p => p.visible).map(p => p.norad).slice(0, 10)
@@ -514,6 +637,29 @@ const handleTrackReentry = (d: any) => {
     setOpenPanel(o => o === p ? null : p)
   }
 
+  const th = {
+    spaceBg:       '#01030a',
+    navBg:         darkMode ? 'rgba(4,8,22,0.96)'    : 'rgba(255,255,255,0.97)',
+    navBorder:     darkMode ? 'rgba(0,229,255,0.08)'  : 'rgba(0,0,0,0.08)',
+    infoBg:        darkMode ? 'rgba(2,5,16,0.92)'     : 'rgba(235,242,255,0.97)',
+    infoBorder:    darkMode ? 'rgba(0,229,255,0.05)'  : 'rgba(0,0,0,0.06)',
+    panelBg:       darkMode ? 'rgba(4,8,20,0.82)'     : 'rgba(255,255,255,0.93)',
+    panelBorder:   darkMode ? 'rgba(0,229,255,0.12)'  : 'rgba(0,80,200,0.14)',
+    panelShadow:   darkMode ? '0 8px 40px rgba(0,0,0,0.6)' : '0 4px 24px rgba(0,0,0,0.12)',
+    panelSolid:    darkMode ? 'rgba(13,16,28,0.98)'   : 'rgba(248,250,255,0.99)',
+    settingsBg:    darkMode ? 'rgba(4,8,22,0.97)'     : '#f5f8fd',
+    settingsBorder:darkMode ? 'rgba(0,229,255,0.12)'  : 'rgba(0,80,200,0.14)',
+    text:          darkMode ? '#ffffff'               : '#0a1628',
+    textSub:       darkMode ? 'rgba(255,255,255,0.6)' : 'rgba(10,22,40,0.65)',
+    textMuted:     darkMode ? 'rgba(255,255,255,0.35)': 'rgba(10,22,40,0.4)',
+    accentDimmed:  darkMode ? 'rgba(0,229,255,0.5)'   : 'rgba(0,100,220,0.7)',
+    inputBg:       darkMode ? 'rgba(255,255,255,0.05)': 'rgba(0,0,0,0.04)',
+    inputBorder:   darkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.12)',
+    dropdownBg:    darkMode ? 'rgba(4,8,22,0.98)'     : 'rgba(248,250,255,0.99)',
+    rowHover:      darkMode ? 'rgba(0,229,255,0.06)'  : 'rgba(0,80,200,0.05)',
+    accent:        '#00e5ff',
+  }
+
   const panelBase: React.CSSProperties = { ...glass, position: 'absolute', zIndex: 40, borderRadius: 3, overflowY: 'auto', overflowX: 'hidden' }
   const panelMaxH = `calc(${globeVh}vh - 110px)`
   const panelMaxH2 = `calc(${globeVh}vh - 100px)`
@@ -524,14 +670,54 @@ const handleTrackReentry = (d: any) => {
   return (
     <div ref={globeContainerRef} style={{ position: 'fixed', inset: 0, overflow: 'hidden', background: '#01030a', fontFamily: "'Share Tech Mono', 'JetBrains Mono', monospace" }}>
 
-      {/* ══ GLOBE PLEIN ÉCRAN ══ */}
-      <div style={{ position: 'absolute', inset: 0, zIndex: 0, transform: `translateY(calc(41px - ${dashboardVh / 2}vh))` }}>
+      {/* ══ GLOBE ══ */}
+      <div ref={globeWrapperRef} style={globeMaximized
+        ? { position: 'fixed', inset: 0, zIndex: 50, background: '#01030a' }
+        : { position: 'absolute', inset: 0, zIndex: 0, transform: `translateY(calc(41px - ${dashboardVh / 2}vh))`, background: '#01030a' }
+      }>
         <Globe
+          ref={globeRef}
           showDebrisCloud={showDebrisCloud && openPanel !== 'reentry'}
           preloadedSats={satellites}
           reentryMode={openPanel === 'reentry'}
           reentryList={reentryList}
+          autoRotate={autoRotate}
+          liteMode={liteMode}
+          satSize={satSize}
+          showAtmosphere={showAtmosphere}
+          showGrid={showGrid}
         />
+      </div>
+
+      {/* ══ ZOOM CONTROLS + MAXIMIZE ══ */}
+      <div style={{ position:'fixed', top:100, right:16, zIndex:60, display:'flex', flexDirection:'column', gap:2 }}>
+        {([
+          { label:'+', title:'Zoom in',  onClick:()=>globeRef.current?.zoomIn()  },
+          { label:'−', title:'Zoom out', onClick:()=>globeRef.current?.zoomOut() },
+          { label:'⌂', title:'Reset',    onClick:()=>globeRef.current?.reset()   },
+        ] as {label:string;title:string;onClick:()=>void}[]).map(b=>(
+          <button key={b.label} title={b.title} onClick={b.onClick} style={{
+            width:28, height:28, background:'rgba(4,8,22,0.88)', border:'1px solid rgba(0,229,255,0.18)',
+            borderRadius:3, color:'rgba(200,220,255,0.85)', fontSize:b.label==='⌂'?14:17, fontWeight:700,
+            cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', lineHeight:1,
+            backdropFilter:'blur(8px)', transition:'background 0.15s, border-color 0.15s',
+          }}
+          onMouseEnter={e=>{(e.currentTarget as HTMLElement).style.background='rgba(0,229,255,0.12)';(e.currentTarget as HTMLElement).style.borderColor='rgba(0,229,255,0.45)'}}
+          onMouseLeave={e=>{(e.currentTarget as HTMLElement).style.background='rgba(4,8,22,0.88)';(e.currentTarget as HTMLElement).style.borderColor='rgba(0,229,255,0.18)'}}
+          >{b.label}</button>
+        ))}
+        <div style={{ height:1, background:'rgba(0,229,255,0.12)', margin:'2px 0' }} />
+        <button title={globeMaximized ? 'Réduire' : 'Plein écran globe'}
+          onClick={()=>setGlobeMaximized(v=>!v)}
+          style={{ width:28, height:28, background:'rgba(4,8,22,0.88)', border:'1px solid rgba(0,229,255,0.18)', borderRadius:3, color:'rgba(200,220,255,0.85)', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', backdropFilter:'blur(8px)', transition:'background 0.15s, border-color 0.15s', padding:0 }}
+          onMouseEnter={e=>{(e.currentTarget as HTMLElement).style.background='rgba(0,229,255,0.12)';(e.currentTarget as HTMLElement).style.borderColor='rgba(0,229,255,0.45)'}}
+          onMouseLeave={e=>{(e.currentTarget as HTMLElement).style.background='rgba(4,8,22,0.88)';(e.currentTarget as HTMLElement).style.borderColor='rgba(0,229,255,0.18)'}}
+        >
+          {globeMaximized
+            ? <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M4 1H1v3M9 1h3v3M4 12H1V9M9 12h3V9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            : <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M1 4V1h3M9 1h3v3M12 9v3H9M4 12H1V9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          }
+        </button>
       </div>
 
       {/* ══ NAVBAR WORLDMONITOR STYLE ══ */}
@@ -558,13 +744,12 @@ const handleTrackReentry = (d: any) => {
           </div>
 
           {/* Nav tabs */}
-          <div style={{ display:'flex', alignItems:'stretch', flex:1, overflow:'hidden' }}>
+          <div className="nav-tabs-scroll" style={{ display:'flex', alignItems:'stretch', flex:1 }}>
             {([
               { id:'satellites', icon:'◉', label:'OBJECTS',    count:filteredSats.length,           col:'#00e5ff' },
               { id:'missions',   icon:'▶', label:'LAUNCHES',   count:upcoming.length,               col:'#ffaa00' },
               { id:'alerts',     icon:'◈', label:'ALERTS',     count:conjunctionAlerts.length,      col: criticalAlert ? '#ff3355' : '#ff7700', pulse:criticalAlert },
-              { id:'position',   icon:'◎', label:'VISIBILITY', count:passes.length,                 col:'#00ff88' },
-              { id:'weather',    icon:'◐', label:'SPACE WX',   count:null,                          col: spaceWeather?.kp >= 5 ? '#ff4444' : spaceWeather?.kp >= 3 ? '#ffaa00' : '#00ccff' },
+              { id:'position',   icon:'◎', label:'VISIBILITY', count:passes.filter(p => p.visible).length, col:'#00ff88' },
               { id:'crew',       icon:'●', label:'CREW',       count:issCrew.length,                col:'#cc88ff' },
               { id:'news',       icon:'◇', label:'NEWS',       count:null,                          col:'#88ddff' },
               { id:'reentry',    icon:'▲', label:'REENTRY',    count:reentryList.length,            col:'#ff4400' },
@@ -593,84 +778,78 @@ const handleTrackReentry = (d: any) => {
                 </button>
               )
             })}
+
+            {/* Bouton ⋯ MORE */}
+            {(() => {
+              const anyMoreActive = (['apod','neo','jwst','moon','solarflares'] as Panel[]).includes(openPanel as Panel)
+              return (
+                <button
+                  onClick={() => setMoreMenuOpen(v => !v)}
+                  style={{
+                    display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
+                    gap:2, padding:'0 13px', border:'none', flexShrink:0,
+                    borderBottom: anyMoreActive ? '2px solid #aaaaff' : moreMenuOpen ? '2px solid rgba(255,255,255,0.3)' : '2px solid transparent',
+                    background: moreMenuOpen ? 'rgba(255,255,255,0.05)' : anyMoreActive ? 'rgba(170,170,255,0.08)' : 'transparent',
+                    color: moreMenuOpen || anyMoreActive ? '#fff' : 'rgba(255,255,255,0.5)',
+                    cursor:'pointer', fontFamily:'inherit', transition:'all .18s',
+                  }}
+                >
+                  <span style={{ fontSize:16, letterSpacing:2, lineHeight:1 }}>···</span>
+                  <span style={{ fontSize:8, fontWeight:700, letterSpacing:1.5, marginTop:2 }}>MORE</span>
+                </button>
+              )
+            })()}
           </div>
 
-          {/* Barre de recherche satellite */}
-          {(() => {
-            const results = navSearch.trim().length >= 2
-              ? allSats.filter(s =>
-                  s.name.toLowerCase().includes(navSearch.toLowerCase()) ||
-                  s.norad.includes(navSearch)
-                ).slice(0, 8)
-              : []
-            return (
-              <div style={{ display:'flex', alignItems:'center', padding:'0 12px', borderLeft:'1px solid rgba(255,255,255,0.05)', position:'relative', flexShrink:0 }}>
-                <div style={{ display:'flex', alignItems:'center', gap:8, background:'rgba(0,0,0,0.35)', border:`1px solid ${navSearchFocused ? 'rgba(0,229,255,0.4)' : 'rgba(255,255,255,0.08)'}`, borderRadius:3, padding:'0 10px', transition:'border-color .2s' }}>
-                  <span style={{ fontSize:11, color:'rgba(0,229,255,0.5)' }}>⌕</span>
-                  <input
-                    type="text"
-                    placeholder="SEARCH SATELLITE..."
-                    value={navSearch}
-                    onChange={e => setNavSearch(e.target.value)}
-                    onFocus={() => setNavSearchFocused(true)}
-                    onBlur={() => setTimeout(() => setNavSearchFocused(false), 150)}
-                    style={{ background:'none', border:'none', outline:'none', color:'#fff', fontSize:9, letterSpacing:1.5, width:160, fontFamily:'inherit', padding:'8px 0' }}
-                  />
-                  {navSearch && (
-                    <button onClick={() => setNavSearch('')} style={{ background:'none', border:'none', color:'rgba(255,255,255,0.3)', cursor:'pointer', fontSize:11, padding:0, lineHeight:1 }}>✕</button>
-                  )}
-                </div>
-                {/* Dropdown résultats */}
-                {navSearchFocused && results.length > 0 && (
-                  <div style={{ position:'absolute', top:'calc(100% + 4px)', left:12, right:12, background:'rgba(4,8,22,0.98)', border:'1px solid rgba(0,229,255,0.15)', borderRadius:3, zIndex:100, overflow:'hidden', boxShadow:'0 8px 32px rgba(0,0,0,0.7)' }}>
-                    {results.map(s => (
-                      <div
-                        key={s.norad}
-                        onMouseDown={() => { selectSat(String(s.norad)); setNavSearch(''); setNavSearchFocused(false); }}
-                        style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 12px', cursor:'pointer', borderBottom:'1px solid rgba(255,255,255,0.04)', transition:'background .1s' }}
-                        onMouseEnter={e => (e.currentTarget.style.background='rgba(0,229,255,0.06)')}
-                        onMouseLeave={e => (e.currentTarget.style.background='transparent')}
-                      >
-                        <div style={{ width:6, height:6, borderRadius:'50%', background: s.category === 'starlink' ? '#55aaff' : s.category === 'station' ? '#00ffff' : s.category === 'gps' ? '#00ff88' : s.category === 'weather' ? '#ff55ff' : s.category === 'science' ? '#ffaa00' : '#aaaaaa', flexShrink:0 }} />
-                        <div style={{ flex:1, minWidth:0 }}>
-                          <div style={{ fontSize:9.5, color:'#fff', fontWeight:600, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{s.name}</div>
-                          <div style={{ fontSize:7.5, color:'rgba(255,255,255,0.4)', marginTop:1 }}>NORAD {s.norad} · {s.category.toUpperCase()}</div>
-                        </div>
-                        <span style={{ fontSize:7, color:'rgba(0,229,255,0.5)', letterSpacing:1, flexShrink:0 }}>TRACK →</span>
-                      </div>
-                    ))}
-                    {navSearch.trim().length >= 2 && (
-                      <div style={{ padding:'6px 12px', fontSize:7, color:'rgba(255,255,255,0.2)', letterSpacing:1 }}>
-                        {allSats.filter(s => s.name.toLowerCase().includes(navSearch.toLowerCase()) || s.norad.includes(navSearch)).length} résultats
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )
-          })()}
 
-          {/* Horloge + stats droite */}
-          <div style={{ display:'flex', alignItems:'center', gap:16, padding:'0 20px', borderLeft:'1px solid rgba(255,255,255,0.05)', flexShrink:0 }}>
-            <div style={{ display:'flex', flexDirection:'column', gap:4 }}>
-              {[
-                { label:'ACTIVE', val: satellites.filter(s => s.category !== 'debris').length, col:'#00ff88' },
-                { label:'RISK',   val: conjunctionAlerts.length, col: conjunctionAlerts.length > 0 ? '#ff3355' : 'rgba(255,255,255,0.15)' },
-              ].map(({ label, val, col }) => (
-                <div key={label} style={{ display:'flex', alignItems:'center', gap:5 }}>
-                  <div style={{ width:5, height:5, borderRadius:'50%', background:col, flexShrink:0 }} />
-                  <span style={{ fontSize:8.5, color:'rgba(255,255,255,0.5)', letterSpacing:1.5 }}>{label}</span>
-                  <span style={{ fontSize:11, color:col, fontWeight:700, minWidth:32, textAlign:'right' }}>{val.toLocaleString()}</span>
-                </div>
-              ))}
-            </div>
-            <div style={{ width:1, height:28, background:'rgba(255,255,255,0.06)' }} />
+          {/* Horloge + gear settings */}
+          <div style={{ display:'flex', alignItems:'center', gap:12, padding:'0 16px', borderLeft:'1px solid rgba(255,255,255,0.05)', flexShrink:0 }}>
             <div style={{ textAlign:'center' }}>
               <div style={{ fontFamily:'Orbitron, sans-serif', fontSize:18, fontWeight:900, color:'#00e5ff', letterSpacing:2, lineHeight:1 }}>{clock}</div>
-              <div style={{ fontSize:9, color:'rgba(0,229,255,0.6)', letterSpacing:2, marginTop:3 }}>UTC</div>
+              <div style={{ fontSize:9, color:'rgba(0,229,255,0.6)', letterSpacing:2, marginTop:3 }}>
+                {timezone === 'UTC' ? 'UTC' : (new Intl.DateTimeFormat('en', { timeZoneName:'short', timeZone: timezone }).formatToParts(new Date()).find(p => p.type === 'timeZoneName')?.value ?? timezone)}
+              </div>
             </div>
+            <div style={{ width:1, height:28, background:'rgba(255,255,255,0.06)' }} />
+            <button onClick={()=>setSettingsOpen(v=>!v)} title={t.settings} style={{
+              width:34, height:34, background: settingsOpen ? 'rgba(0,229,255,0.1)' : 'transparent',
+              border:`1px solid ${settingsOpen ? 'rgba(0,229,255,0.4)' : 'rgba(255,255,255,0.08)'}`,
+              borderRadius:4, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center',
+              color: settingsOpen ? '#00e5ff' : 'rgba(255,255,255,0.55)', transition:'all 0.15s',
+            }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+              </svg>
+            </button>
           </div>
         </div>
+
+        {/* Dropdown MORE — hors du conteneur 58px pour ne pas être clippé */}
+        {moreMenuOpen && (
+          <div style={{ position:'absolute', top:60, left:'50%', transform:'translateX(-50%)', background:'rgba(4,8,22,0.98)', border:'1px solid rgba(255,255,255,0.1)', borderRadius:6, zIndex:200, overflow:'hidden', boxShadow:'0 8px 32px rgba(0,0,0,0.8)', display:'flex' }}>
+            {([
+              { id:'apod',        icon:'🌌', label:'APOD',       col:'#ff88aa' },
+              { id:'neo',         icon:'☄',  label:'ASTÉROÏDES', col:'#ff6600' },
+              { id:'jwst',        icon:'🔭', label:'JWST',        col:'#aa55ff' },
+              { id:'moon',        icon:'🌙', label:'LUNE',        col:'#ccaaff' },
+              { id:'solarflares', icon:'☀',  label:'SOLAIRE',     col:'#ffaa00' },
+            ] as { id:Panel; icon:string; label:string; col:string }[]).map(p => {
+              const active = openPanel === p.id
+              return (
+                <button key={p.id as string}
+                  onClick={() => { togglePanel(p.id); setMoreMenuOpen(false) }}
+                  style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:3, padding:'10px 18px', border:'none', borderBottom:`2px solid ${active ? p.col : 'transparent'}`, background: active ? `${p.col}14` : 'transparent', color: active ? p.col : 'rgba(255,255,255,0.6)', cursor:'pointer', fontFamily:'inherit', transition:'all .15s' }}
+                  onMouseEnter={e => { if (!active) (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.05)' }}
+                  onMouseLeave={e => { if (!active) (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+                >
+                  <span style={{ fontSize:16 }}>{p.icon}</span>
+                  <span style={{ fontSize:8.5, fontWeight:700, letterSpacing:1.5 }}>{p.label}</span>
+                </button>
+              )
+            })}
+          </div>
+        )}
 
         {/* Barre info secondaire */}
         <div style={{ height:24, background:'rgba(2,5,16,0.92)', borderBottom:'1px solid rgba(0,229,255,0.05)', display:'flex', alignItems:'center', padding:'0 20px', gap:0 }}>
@@ -695,131 +874,161 @@ const handleTrackReentry = (d: any) => {
         </div>
       </div>
 
-      {/* ══ PANEL OBJECTS ══ */}
-      {openPanel === 'satellites' && (
-        <div style={{ ...panelBase, top: 100, left: 16, width: 280, maxHeight: panelMaxH, display: 'flex', flexDirection: 'column' }}>
-          <div style={{ height: 2, background: 'linear-gradient(90deg, #00e5ff, transparent)' }} />
-          <div style={{ padding: '12px 14px 8px', borderBottom: '1px solid rgba(0,229,255,0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={sectionTitle()}>SURVEILLANCE FILTERS</span>
-            <button onClick={() => { resetAll(); setOpenPanel(null); }} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.3)', cursor: 'pointer', fontSize: 12 }}>✕</button>
-          </div>
+      {/* ══ PANEL OBJECTS — style COUCHES ══ */}
+      {openPanel === 'satellites' && (() => {
+        const CAT_META: Record<string, { icon: string; label: string }> = {
+          station:    { icon: '🛸', label: 'STATIONS' },
+          gps:        { icon: '📍', label: 'GPS / GNSS' },
+          weather:    { icon: '🌤', label: 'MÉTÉO' },
+          science:    { icon: '🔭', label: 'SCIENCE' },
+          starlink:   { icon: '🌐', label: 'STARLINK' },
+          telephonie: { icon: '📡', label: 'TÉLÉPHONIE' },
+        }
+        return (
+          <div style={{ position: 'absolute', top: 84, left: 16, width: 260, maxHeight: panelMaxH2, zIndex: 40, display: 'flex', flexDirection: 'column', background: 'rgba(13,16,28,0.98)', backdropFilter: 'blur(20px)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6, boxShadow: '0 8px 32px rgba(0,0,0,0.7)', overflow: 'hidden' }}>
 
-          <div style={{ padding: '10px 14px', borderBottom: '1px solid rgba(0,229,255,0.1)', display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <input 
-              type="text"
-              placeholder="SEARCH NAME OR NORAD..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(0,229,255,0.2)', color: '#00e5ff', fontSize: 9, padding: '6px 8px', outline: 'none', fontFamily: 'inherit' }}
-            />
+            {/* Header COUCHES */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '13px 16px', borderBottom: '1px solid rgba(255,255,255,0.07)', flexShrink: 0 }}>
+              <span style={{ fontFamily: 'Orbitron, sans-serif', fontSize: 12, fontWeight: 700, letterSpacing: 3, color: 'rgba(255,255,255,0.9)' }}>COUCHES</span>
+              <button onClick={() => { resetAll(); setOpenPanel(null); }} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.35)', cursor: 'pointer', fontSize: 12, lineHeight: 1, padding: 0 }}>▼</button>
+            </div>
 
-            <div style={{ display: 'flex', gap: 6 }}>
-              <select 
+            {/* Recherche — fixe */}
+            <div style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', flexShrink: 0 }}>
+              <input
+                type="text"
+                placeholder="Rechercher..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                style={{ width: '100%', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 4, outline: 'none', color: 'rgba(255,255,255,0.55)', fontSize: 10, padding: '6px 9px', fontFamily: 'inherit', letterSpacing: 0.5, boxSizing: 'border-box' as const }}
+              />
+            </div>
+
+            {/* Filtre pays — fixe */}
+            <div style={{ padding: '6px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', flexShrink: 0 }}>
+              <select
                 value={countryFilter}
                 onChange={(e) => setCountryFilter(e.target.value)}
-                style={{ flex: 1, background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(0,229,255,0.2)', color: '#00e5ff', fontSize: 8, padding: '4px', outline: 'none', fontFamily: 'inherit' }}
+                style={{ width: '100%', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: countryFilter === 'ALL' ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.85)', fontSize: 10, padding: '6px 9px', outline: 'none', fontFamily: 'inherit', borderRadius: 4, cursor: 'pointer', boxSizing: 'border-box' as const }}
               >
-                <option value="ALL">ALL NATIONS</option>
+                <option value="ALL">🌍 Tous les pays</option>
                 <option value="US">🇺🇸 USA</option>
-                <option value="PRC">🇨🇳 CHINA</option>
-                <option value="CIS">🇷🇺 RUSSIA</option>
-                <option value="FR">🇫🇷 FRANCE</option>
+                <option value="PRC">🇨🇳 Chine</option>
+                <option value="CIS">🇷🇺 Russie</option>
+                <option value="FR">🇫🇷 France</option>
                 <option value="ESA">🇪🇺 ESA</option>
-                <option value="IND">🇮🇳 INDIA</option>
-                <option value="JPN">🇯🇵 JAPAN</option>
-                <option value="GBR">🇬🇧 UK</option>
-                <option value="DEU">🇩🇪 GERMANY</option>
-                <option value="ITA">🇮🇹 ITALY</option>
-                <option value="ESP">🇪🇸 SPAIN</option>
-                <option value="NLD">🇳🇱 NETHERLANDS</option>
-                <option value="SWE">🇸🇪 SWEDEN</option>
-                <option value="NOR">🇳🇴 NORWAY</option>
-                <option value="BEL">🇧🇪 BELGIUM</option>
-                <option value="CHE">🇨🇭 SWITZERLAND</option>
-                <option value="POL">🇵🇱 POLAND</option>
-                <option value="CZE">🇨🇿 CZECH REP.</option>
-                <option value="KOR">🇰🇷 SOUTH KOREA</option>
-                <option value="PRK">🇰🇵 NORTH KOREA</option>
-                <option value="AUS">🇦🇺 AUSTRALIA</option>
-                <option value="CAN">🇨🇦 CANADA</option>
-                <option value="BRA">🇧🇷 BRAZIL</option>
-                <option value="ARG">🇦🇷 ARGENTINA</option>
-                <option value="MEX">🇲🇽 MEXICO</option>
-                <option value="COL">🇨🇴 COLOMBIA</option>
-                <option value="ISR">🇮🇱 ISRAEL</option>
-                <option value="IRAN">🇮🇷 IRAN</option>
-                <option value="TUR">🇹🇷 TURKEY</option>
-                <option value="SAU">🇸🇦 SAUDI ARABIA</option>
-                <option value="UAE">🇦🇪 UAE</option>
-                <option value="QAT">🇶🇦 QATAR</option>
-                <option value="PAK">🇵🇰 PAKISTAN</option>
-                <option value="BGD">🇧🇩 BANGLADESH</option>
-                <option value="IDN">🇮🇩 INDONESIA</option>
-                <option value="MYS">🇲🇾 MALAYSIA</option>
-                <option value="THA">🇹🇭 THAILAND</option>
-                <option value="VNM">🇻🇳 VIETNAM</option>
-                <option value="PHL">🇵🇭 PHILIPPINES</option>
-                <option value="SGP">🇸🇬 SINGAPORE</option>
-                <option value="NGA">🇳🇬 NIGERIA</option>
-                <option value="ZAF">🇿🇦 SOUTH AFRICA</option>
-                <option value="EGY">🇪🇬 EGYPT</option>
-                <option value="ETH">🇪🇹 ETHIOPIA</option>
-                <option value="GHA">🇬🇭 GHANA</option>
-                <option value="KEN">🇰🇪 KENYA</option>
-                <option value="UKR">🇺🇦 UKRAINE</option>
-                <option value="KAZ">🇰🇿 KAZAKHSTAN</option>
-                <option value="LUX">🇱🇺 LUXEMBOURG</option>
-                <option value="PRT">🇵🇹 PORTUGAL</option>
-                <option value="GRC">🇬🇷 GREECE</option>
-                <option value="ROU">🇷🇴 ROMANIA</option>
-                <option value="HUN">🇭🇺 HUNGARY</option>
-                <option value="NZL">🇳🇿 NEW ZEALAND</option>
+                <option value="IND">🇮🇳 Inde</option>
+                <option value="JPN">🇯🇵 Japon</option>
+                <option value="GBR">🇬🇧 Royaume-Uni</option>
+                <option value="DEU">🇩🇪 Allemagne</option>
+                <option value="ITA">🇮🇹 Italie</option>
+                <option value="ESP">🇪🇸 Espagne</option>
+                <option value="NLD">🇳🇱 Pays-Bas</option>
+                <option value="SWE">🇸🇪 Suède</option>
+                <option value="NOR">🇳🇴 Norvège</option>
+                <option value="BEL">🇧🇪 Belgique</option>
+                <option value="CHE">🇨🇭 Suisse</option>
+                <option value="POL">🇵🇱 Pologne</option>
+                <option value="CZE">🇨🇿 Rép. Tchèque</option>
+                <option value="KOR">🇰🇷 Corée du Sud</option>
+                <option value="PRK">🇰🇵 Corée du Nord</option>
+                <option value="AUS">🇦🇺 Australie</option>
+                <option value="CAN">🇨🇦 Canada</option>
+                <option value="BRA">🇧🇷 Brésil</option>
+                <option value="ARG">🇦🇷 Argentine</option>
+                <option value="MEX">🇲🇽 Mexique</option>
+                <option value="COL">🇨🇴 Colombie</option>
+                <option value="ISR">🇮🇱 Israël</option>
+                <option value="IRAN">🇮🇷 Iran</option>
+                <option value="TUR">🇹🇷 Turquie</option>
+                <option value="SAU">🇸🇦 Arabie Saoudite</option>
+                <option value="UAE">🇦🇪 Émirats Arabes</option>
+                <option value="QAT">🇶🇦 Qatar</option>
+                <option value="PAK">🇵🇰 Pakistan</option>
+                <option value="BGD">🇧🇩 Bangladesh</option>
+                <option value="IDN">🇮🇩 Indonésie</option>
+                <option value="MYS">🇲🇾 Malaisie</option>
+                <option value="THA">🇹🇭 Thaïlande</option>
+                <option value="VNM">🇻🇳 Vietnam</option>
+                <option value="PHL">🇵🇭 Philippines</option>
+                <option value="SGP">🇸🇬 Singapour</option>
+                <option value="NGA">🇳🇬 Nigeria</option>
+                <option value="ZAF">🇿🇦 Afrique du Sud</option>
+                <option value="EGY">🇪🇬 Égypte</option>
+                <option value="ETH">🇪🇹 Éthiopie</option>
+                <option value="GHA">🇬🇭 Ghana</option>
+                <option value="KEN">🇰🇪 Kenya</option>
+                <option value="UKR">🇺🇦 Ukraine</option>
+                <option value="KAZ">🇰🇿 Kazakhstan</option>
+                <option value="LUX">🇱🇺 Luxembourg</option>
+                <option value="PRT">🇵🇹 Portugal</option>
+                <option value="GRC">🇬🇷 Grèce</option>
+                <option value="ROU">🇷🇴 Roumanie</option>
+                <option value="HUN">🇭🇺 Hongrie</option>
+                <option value="NZL">🇳🇿 Nouvelle-Zélande</option>
               </select>
             </div>
 
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
-              {ALL_CATS.map(cat => (
-                <button key={cat} onClick={() => toggleFilter(cat)} style={{ padding: '2px 6px', borderRadius: 2, fontSize: 7, letterSpacing: 0.5, cursor: 'pointer', border: `1px solid ${activeFilters.has(cat) ? CAT_COLOR[cat] : 'rgba(255,255,255,0.06)'}`, background: activeFilters.has(cat) ? `${CAT_COLOR[cat]}18` : 'transparent', color: activeFilters.has(cat) ? CAT_COLOR[cat] : 'rgba(255,255,255,0.2)', fontFamily: 'inherit' }}>
-                  {CAT_LABEL[cat].toUpperCase()}
-                </button>
-              ))}
+            {/* Catégories — checkboxes (scrollable) + liste */}
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              {ALL_CATS.map(cat => {
+                const isActive = activeFilters.has(cat)
+                const { icon, label } = CAT_META[cat] || { icon: '●', label: cat.toUpperCase() }
+                const col = CAT_COLOR[cat] || '#00ff88'
+                return (
+                  <div
+                    key={cat}
+                    onClick={() => toggleFilter(cat)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.05)', transition: 'background .12s' }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.04)' }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+                  >
+                    <div style={{ width: 15, height: 15, borderRadius: 3, flexShrink: 0, background: isActive ? col : 'transparent', border: `2px solid ${isActive ? col : 'rgba(255,255,255,0.22)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all .15s' }}>
+                      {isActive && <span style={{ color: '#000', fontSize: 9, lineHeight: 1, fontWeight: 900 }}>✓</span>}
+                    </div>
+                    <span style={{ fontSize: 13, flexShrink: 0, lineHeight: 1 }}>{icon}</span>
+                    <span style={{ flex: 1, fontSize: 9.5, letterSpacing: 1.5, color: isActive ? '#fff' : 'rgba(255,255,255,0.35)', fontWeight: 700 }}>{label}</span>
+                  </div>
+                )
+              })}
+
+              {/* Séparateur */}
+              <div style={{ height: 1, background: 'rgba(255,255,255,0.06)', margin: '4px 0' }} />
+
+              {/* Liste satellites */}
+              {filteredSats.length === 0 ? (
+                <div style={{ padding: '24px 16px', textAlign: 'center', fontSize: 10, color: 'rgba(255,255,255,0.2)', letterSpacing: 1 }}>
+                  AUCUN OBJET CORRESPONDANT
+                </div>
+              ) : (
+                filteredSats.map(sat => {
+                  const isSel = sat.norad === selectedNorad
+                  const col = CAT_COLOR[sat.category]
+                  return (
+                    <div key={sat.norad} onClick={() => selectSat(sat.norad)} style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', background: isSel ? `${col}14` : 'transparent', borderLeft: `3px solid ${isSel ? col : 'transparent'}`, borderBottom: '1px solid rgba(255,255,255,0.03)', transition: 'all 0.1s' }}
+                      onMouseEnter={e => { if (!isSel) (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.04)' }}
+                      onMouseLeave={e => { if (!isSel) (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+                    >
+                      <div style={{ width: 7, height: 7, borderRadius: '50%', background: col, boxShadow: isSel ? `0 0 6px ${col}` : 'none', flexShrink: 0 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 10, color: isSel ? '#fff' : 'rgba(255,255,255,0.65)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          <span style={{ marginRight: 5 }}>{getFlag(sat.country || sat.countryCode)}</span>
+                          {sat.name}
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 8, color: 'rgba(255,255,255,0.25)', flexShrink: 0 }}>{sat.norad}</div>
+                    </div>
+                  )
+                })
+              )}
             </div>
           </div>
-
-          <div style={{ flex: 1, overflowY: 'auto' }}>
-            {filteredSats.length === 0 ? (
-              <div style={{ padding: 20, textAlign: 'center', fontSize: 8, color: 'rgba(255,255,255,0.2)' }}>
-                NO OBJECTS MATCHING FILTERS
-              </div>
-            ) : (
-              filteredSats.map(sat => {
-                const isSel = sat.norad === selectedNorad;
-
-                return (
-                  <div key={sat.norad} onClick={() => selectSat(sat.norad)} style={{ 
-                    padding: '7px 14px', display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', 
-                    background: isSel ? 'rgba(0,229,255,0.1)' : 'transparent',
-                    borderLeft: `2px solid ${isSel ? CAT_COLOR[sat.category] : 'transparent'}`, transition: 'all 0.1s'
-                  }}>
-                    <div style={{ width: 5, height: 5, borderRadius: '50%', background: CAT_COLOR[sat.category], flexShrink: 0 }} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 9.5, color: isSel ? '#fff' : 'rgba(255,255,255,0.65)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        <span style={{ marginRight: 6 }}>{getFlag(sat.country || sat.countryCode)}</span>
-                        {sat.name}
-                      </div>
-                    </div>
-                    <div style={{ fontSize: 8, color: 'rgba(0,229,255,0.5)' }}>{sat.norad}</div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </div>
-      )}
+        )
+      })()}
 
       {/* ══ PANEL MISSIONS ══ */}
       {openPanel === 'missions' && (
-        <div style={{ ...panelBase, top: 100, left: 16, width: 290, maxHeight: panelMaxH, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ ...panelBase, top: 84, left: 16, width: 290, maxHeight: panelMaxH2, display: 'flex', flexDirection: 'column' }}>
           <div style={{ height: 2, background: 'linear-gradient(90deg, #ffaa00, transparent)' }} />
           <div style={{ padding: '12px 14px 8px', borderBottom: '1px solid rgba(255,170,0,0.1)', display: 'flex', justifyContent: 'space-between' }}>
             <span style={sectionTitle('#ffaa00')}>UPCOMING LAUNCHES — {upcoming.length}</span>
@@ -856,7 +1065,7 @@ const handleTrackReentry = (d: any) => {
         return (
           <>
             {/* LEFT: liste des alertes */}
-            <div style={{ ...panelBase, top: 100, left: 16, width: 300, maxHeight: panelMaxH, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ ...panelBase, top: 84, left: 16, width: 300, maxHeight: panelMaxH2, display: 'flex', flexDirection: 'column' }}>
               <div style={{ height: 2, background: `linear-gradient(90deg, ${critical > 0 ? '#ff3355' : '#ff8800'}, transparent)` }} />
               <div style={{ padding: '12px 14px 8px', borderBottom: '1px solid rgba(255,50,80,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
@@ -925,7 +1134,7 @@ const handleTrackReentry = (d: any) => {
               const satAObj = allSats.find(s => s.norad === a.noradA)
               const satBObj = allSats.find(s => s.norad === a.noradB)
               return (
-                <div style={{ ...panelBase, top: 100, left: 332, width: 340, maxHeight: panelMaxH, display: 'flex', flexDirection: 'column' }}>
+                <div style={{ ...panelBase, top: 84, left: 332, width: 340, maxHeight: panelMaxH2, display: 'flex', flexDirection: 'column' }}>
                   <div style={{ height: 2, background: `linear-gradient(90deg, ${ac}, transparent)` }} />
                   <div style={{ padding: '12px 14px 8px', borderBottom: `1px solid ${ac}20`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>
@@ -1174,6 +1383,124 @@ const handleTrackReentry = (d: any) => {
         </div>
       )}
 
+      {/* ══ PANEL VISIBILITY ══ */}
+      {openPanel === 'position' && (
+        <div style={{
+          position: 'absolute', top: 84, left: 16, width: 320, maxHeight: panelMaxH2,
+          zIndex: 40, display: 'flex', flexDirection: 'column',
+          background: th.panelSolid, backdropFilter: 'blur(20px)',
+          border: `1px solid ${th.panelBorder}`, borderRadius: 6,
+          boxShadow: th.panelShadow, overflow: 'hidden',
+          fontFamily: "'JetBrains Mono', monospace",
+        }}>
+          {/* Header */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '13px 16px', borderBottom: `1px solid ${th.inputBorder}`, flexShrink: 0 }}>
+            <span style={{ fontFamily: 'Orbitron, sans-serif', fontSize: 12, fontWeight: 700, letterSpacing: 3, color: th.text }}>VISIBILITY</span>
+            <button onClick={() => { resetAll(); setOpenPanel(null); }} style={{ background: 'none', border: 'none', color: th.textMuted, cursor: 'pointer', fontSize: 12 }}>✕</button>
+          </div>
+
+          {/* Scrollable content */}
+          <div style={{ flex: 1, overflowY: 'auto', padding: '10px 14px' }}>
+            {/* No position yet */}
+            {userPos === null && !visLoading && !visError && (
+              <div style={{ textAlign: 'center', padding: '30px 0' }}>
+                <div style={{ fontSize: 28, marginBottom: 12 }}>◎</div>
+                <div style={{ fontSize: 9, color: th.textMuted, letterSpacing: 2, marginBottom: 16 }}>POSITION NON ACTIVÉE</div>
+                <button
+                  onClick={() => { requestLocation(); locationEnabledRef.current = true; }}
+                  style={{ background: 'rgba(0,255,136,0.1)', border: '1px solid rgba(0,255,136,0.35)', color: '#00ff88', fontSize: 9, padding: '9px 18px', cursor: 'pointer', borderRadius: 4, fontFamily: 'inherit', letterSpacing: 2, fontWeight: 700 }}
+                >
+                  ACTIVER MA POSITION
+                </button>
+              </div>
+            )}
+
+            {/* Loading */}
+            {visLoading && (
+              <div style={{ textAlign: 'center', padding: '30px 0', color: 'rgba(0,255,136,0.5)', fontSize: 9, letterSpacing: 2 }}>
+                LOCALISATION EN COURS...
+              </div>
+            )}
+
+            {/* Error */}
+            {visError && (
+              <div style={{ padding: '12px', background: 'rgba(255,50,50,0.08)', border: '1px solid rgba(255,50,50,0.2)', borderRadius: 4, marginBottom: 12 }}>
+                <div style={{ fontSize: 9, color: '#ff5555', letterSpacing: 1 }}>ERREUR : {visError}</div>
+                <button
+                  onClick={() => { requestLocation(); locationEnabledRef.current = true; }}
+                  style={{ marginTop: 8, background: 'none', border: '1px solid rgba(255,85,85,0.3)', color: '#ff5555', fontSize: 8, padding: '5px 12px', cursor: 'pointer', borderRadius: 3, fontFamily: 'inherit', letterSpacing: 1.5 }}
+                >
+                  RÉESSAYER
+                </button>
+              </div>
+            )}
+
+            {/* Position acquired */}
+            {userPos && (
+              <>
+                {/* Coordonnées */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 12 }}>
+                  {[
+                    { label: 'LATITUDE', val: `${userPos.lat.toFixed(4)}°${userPos.lat >= 0 ? 'N' : 'S'}` },
+                    { label: 'LONGITUDE', val: `${Math.abs(userPos.lon).toFixed(4)}°${userPos.lon >= 0 ? 'E' : 'W'}` },
+                    { label: 'ALT', val: `${(userPos.alt * 1000).toFixed(0)}m` },
+                  ].map(({ label, val }) => (
+                    <div key={label} style={{ background: 'rgba(0,255,136,0.05)', border: '1px solid rgba(0,255,136,0.12)', borderRadius: 4, padding: '8px 6px', textAlign: 'center' }}>
+                      <div style={{ fontSize: 6.5, color: 'rgba(0,255,136,0.5)', letterSpacing: 2, marginBottom: 4 }}>{label}</div>
+                      <div style={{ fontSize: 9, color: '#00ff88', fontWeight: 700 }}>{val}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Stats line */}
+                <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                  <div style={{ flex: 1, padding: '7px 10px', background: 'rgba(0,255,136,0.08)', border: '1px solid rgba(0,255,136,0.18)', borderRadius: 4, textAlign: 'center' }}>
+                    <div style={{ fontSize: 18, fontWeight: 900, color: '#00ff88', fontFamily: 'Orbitron, sans-serif', lineHeight: 1 }}>{passes.filter(p => p.visible).length}</div>
+                    <div style={{ fontSize: 7, color: 'rgba(0,255,136,0.6)', letterSpacing: 1.5, marginTop: 3 }}>SATELLITES VISIBLES</div>
+                  </div>
+                  <div style={{ flex: 1, padding: '7px 10px', background: 'rgba(0,229,255,0.05)', border: '1px solid rgba(0,229,255,0.12)', borderRadius: 4, textAlign: 'center' }}>
+                    <div style={{ fontSize: 18, fontWeight: 900, color: '#00e5ff', fontFamily: 'Orbitron, sans-serif', lineHeight: 1 }}>{passes.length}</div>
+                    <div style={{ fontSize: 7, color: 'rgba(0,229,255,0.5)', letterSpacing: 1.5, marginTop: 3 }}>AU-DESSUS HORIZON</div>
+                  </div>
+                </div>
+
+                {/* Satellite list */}
+                {passes.slice(0, 50).map((p, i) => (
+                  <div key={p.norad} onClick={() => { selectSat(p.norad); }} style={{
+                    display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px',
+                    marginBottom: 4, borderRadius: 4, cursor: 'pointer',
+                    background: i % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent',
+                    border: `1px solid ${p.visible ? 'rgba(0,255,136,0.12)' : 'rgba(255,255,255,0.04)'}`,
+                    borderLeft: `3px solid ${p.visible ? '#00ff88' : 'rgba(255,255,255,0.1)'}`,
+                  }}>
+                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: CAT_COLOR[p.category] || '#fff', flexShrink: 0 }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 9, color: th.text, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
+                      <div style={{ fontSize: 7.5, color: th.textMuted, marginTop: 1 }}>{(CAT_LABEL[p.category] || p.category).toUpperCase()}</div>
+                    </div>
+                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: p.visible ? '#00ff88' : th.textSub }}>{p.elevationDeg}°</div>
+                      <div style={{ fontSize: 7, color: th.textMuted }}>Az {p.azimuthDeg}°</div>
+                      {p.rangekm > 0 && <div style={{ fontSize: 7, color: th.textMuted }}>{p.rangekm} km</div>}
+                    </div>
+                    {p.visible && (
+                      <div style={{ fontSize: 6.5, padding: '2px 5px', background: 'rgba(0,255,136,0.12)', border: '1px solid rgba(0,255,136,0.3)', color: '#00ff88', borderRadius: 3, letterSpacing: 1, flexShrink: 0 }}>VISIBLE</div>
+                    )}
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ══ PANELS NOUVEAUX ══ */}
+      {openPanel === 'apod' && <ApodPanel th={th} onClose={() => setOpenPanel(null)} maxHeight={panelMaxH2} />}
+      {openPanel === 'neo' && <NeoPanel th={th} onClose={() => setOpenPanel(null)} maxHeight={panelMaxH2} />}
+      {openPanel === 'jwst' && <JwstPanel th={th} onClose={() => setOpenPanel(null)} maxHeight={panelMaxH2} />}
+      {openPanel === 'moon' && <MoonPanel th={th} onClose={() => setOpenPanel(null)} maxHeight={panelMaxH2} />}
+      {openPanel === 'solarflares' && <SolarFlaresPanel th={th} kp={spaceWeather?.kp ?? 0} onClose={() => setOpenPanel(null)} maxHeight={panelMaxH2} />}
+
       {/* ══ LAUNCH PAD PANEL ══ */}
       {activePadLaunch && (() => {
         const det = launchDetail
@@ -1203,7 +1530,7 @@ const handleTrackReentry = (d: any) => {
         )
 
         return (
-          <div style={{ ...panelBase, top: 100, right: 16, width: 370, maxHeight: panelMaxH, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ ...panelBase, top: 84, right: 16, width: 370, maxHeight: panelMaxH2, display: 'flex', flexDirection: 'column' }}>
             <div style={{ height: 2, background: 'linear-gradient(90deg, #ffaa00, #ff6600, transparent)' }} />
 
             {/* Header */}
@@ -1582,6 +1909,96 @@ const handleTrackReentry = (d: any) => {
       >
         <div style={{ width: 36, height: 3, borderRadius: 2, background: 'rgba(255,255,255,0.18)' }} />
       </div>
+
+      {/* ══ SETTINGS PANEL ══ */}
+      {settingsOpen && (<>
+        <div onClick={()=>setSettingsOpen(false)} style={{ position:'fixed', inset:0, zIndex:98, background:'rgba(0,0,0,0.4)' }} />
+        <div style={{ position:'fixed', top:62, right:0, width:300, bottom:0, zIndex:99, background:th.settingsBg, borderLeft:`1px solid ${th.settingsBorder}`, display:'flex', flexDirection:'column', fontFamily:"'JetBrains Mono', monospace", boxShadow:'-8px 0 32px rgba(0,0,0,0.6)' }}>
+          <div style={{ padding:'14px 16px 12px', borderBottom:`1px solid ${th.settingsBorder}`, display:'flex', alignItems:'center', justifyContent:'space-between', flexShrink:0 }}>
+            <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#00e5ff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+              <span style={{ fontSize:11, fontWeight:700, color:'#00e5ff', letterSpacing:2 }}>{t.settings}</span>
+            </div>
+            <button onClick={()=>setSettingsOpen(false)} style={{ background:'none', border:'none', color:th.textMuted, cursor:'pointer', fontSize:16, lineHeight:1, padding:'2px 4px' }}>✕</button>
+          </div>
+
+          <div style={{ flex:1, overflowY:'auto', padding:'8px 0' }}>
+            {/* ── RÉGION & HEURE ── */}
+            <div style={{ padding:'10px 16px 4px', fontSize:8.5, color:th.accentDimmed, letterSpacing:2.5, fontWeight:700 }}>{t.region}</div>
+            <div style={{ padding:'6px 16px 10px' }}>
+              <div style={{ fontSize:9, color:th.textMuted, letterSpacing:1.5, marginBottom:6 }}>{t.timezone}</div>
+              <select value={timezone} onChange={e=>updateSettings({ timezone: e.target.value })} style={{ width:'100%', background:th.inputBg, border:`1px solid ${th.panelBorder}`, borderRadius:3, color:th.text, fontSize:10, padding:'6px 8px', fontFamily:"'JetBrains Mono', monospace", outline:'none', cursor:'pointer' }}>
+                {TIMEZONES.map(tz=><option key={tz.value} value={tz.value} style={{ background: darkMode ? '#04091a' : '#f5f8fd' }}>{tz.label}</option>)}
+              </select>
+            </div>
+            <div style={{ padding:'0 16px 12px' }}>
+              <div style={{ fontSize:9, color:th.textMuted, letterSpacing:1.5, marginBottom:6 }}>{t.language}</div>
+              <div style={{ display:'flex', gap:6 }}>
+                {(['fr','en'] as const).map(lang=>(
+                  <button key={lang} onClick={()=>updateSettings({ language: lang })} style={{ flex:1, padding:'6px 0', background: language===lang ? 'rgba(0,229,255,0.15)' : 'transparent', border:`1px solid ${language===lang ? 'rgba(0,229,255,0.5)' : th.inputBorder}`, borderRadius:3, color: language===lang ? '#00e5ff' : th.textSub, fontSize:10, fontWeight:700, letterSpacing:2, cursor:'pointer', fontFamily:"'JetBrains Mono', monospace", transition:'all 0.15s' }}>{lang.toUpperCase()}</button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ height:1, background:th.inputBorder, margin:'2px 0' }} />
+
+            {/* ── AFFICHAGE ── */}
+            <div style={{ padding:'10px 16px 4px', fontSize:8.5, color:th.accentDimmed, letterSpacing:2.5, fontWeight:700 }}>{t.display}</div>
+            {([
+              { key:'darkMode'       as const, label:t.darkMode,    desc:t.darkModeDesc,    val:darkMode       },
+              { key:'showAtmosphere' as const, label:t.atmosphere,  desc:t.atmosphereDesc,  val:showAtmosphere },
+              { key:'showGrid'       as const, label:t.grid,        desc:t.gridDesc,        val:showGrid       },
+            ]).map(row=>(
+              <div key={row.key} style={{ padding:'6px 16px', display:'flex', alignItems:'center', justifyContent:'space-between', gap:8 }}>
+                <div>
+                  <div style={{ fontSize:9.5, color:th.text, fontWeight:700, letterSpacing:1 }}>{row.label}</div>
+                  <div style={{ fontSize:8, color:th.textMuted, marginTop:2, lineHeight:1.4 }}>{row.desc}</div>
+                </div>
+                <div onClick={()=>updateSettings({ [row.key]: !row.val } as any)} style={{ width:34, height:18, borderRadius:9, background: row.val ? '#00e676' : th.inputBg, border:`1px solid ${row.val ? '#00e676' : th.inputBorder}`, cursor:'pointer', position:'relative', transition:'background 0.2s, border-color 0.2s', flexShrink:0 }}>
+                  <div style={{ position:'absolute', top:2, left: row.val ? 17 : 2, width:12, height:12, borderRadius:'50%', background:'#fff', transition:'left 0.2s', boxShadow:'0 1px 3px rgba(0,0,0,0.4)' }} />
+                </div>
+              </div>
+            ))}
+            <div style={{ padding:'8px 16px 12px' }}>
+              <div style={{ fontSize:9, color:th.textMuted, letterSpacing:1.5, marginBottom:6 }}>{t.satSize}</div>
+              <div style={{ display:'flex', gap:4 }}>
+                {(['small','medium','large'] as const).map(s=>(
+                  <button key={s} onClick={()=>updateSettings({ satSize: s })} style={{ flex:1, padding:'5px 0', background: satSize===s ? 'rgba(0,230,118,0.15)' : 'transparent', border:`1px solid ${satSize===s ? 'rgba(0,230,118,0.5)' : th.inputBorder}`, borderRadius:3, color: satSize===s ? '#00e676' : th.textSub, fontSize:9, cursor:'pointer', fontFamily:"'JetBrains Mono', monospace", fontWeight: satSize===s ? 700 : 400, transition:'all 0.15s' }}>{s==='small' ? t.small : s==='medium' ? t.medium : t.large}</button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ height:1, background:th.inputBorder, margin:'2px 0' }} />
+
+            {/* ── PERFORMANCES ── */}
+            <div style={{ padding:'10px 16px 4px', fontSize:8.5, color:th.accentDimmed, letterSpacing:2.5, fontWeight:700 }}>{t.performance}</div>
+            {([
+              { key:'liteMode'   as const, label:t.liteMode,    desc:t.liteModeDesc,    val:liteMode   },
+              { key:'autoRotate' as const, label:t.autoRotate,  desc:t.autoRotateDesc,  val:autoRotate },
+            ]).map(row=>(
+              <div key={row.key} style={{ padding:'6px 16px', display:'flex', alignItems:'center', justifyContent:'space-between', gap:8 }}>
+                <div>
+                  <div style={{ fontSize:9.5, color:th.text, fontWeight:700, letterSpacing:1 }}>{row.label}</div>
+                  <div style={{ fontSize:8, color:th.textMuted, marginTop:2, lineHeight:1.4 }}>{row.desc}</div>
+                </div>
+                <div onClick={()=>updateSettings({ [row.key]: !row.val } as any)} style={{ width:34, height:18, borderRadius:9, background: row.val ? '#00e676' : th.inputBg, border:`1px solid ${row.val ? '#00e676' : th.inputBorder}`, cursor:'pointer', position:'relative', transition:'background 0.2s, border-color 0.2s', flexShrink:0 }}>
+                  <div style={{ position:'absolute', top:2, left: row.val ? 17 : 2, width:12, height:12, borderRadius:'50%', background:'#fff', transition:'left 0.2s', boxShadow:'0 1px 3px rgba(0,0,0,0.4)' }} />
+                </div>
+              </div>
+            ))}
+
+            <div style={{ height:1, background:th.inputBorder, margin:'14px 0 6px' }} />
+            <div style={{ padding:'4px 16px 12px' }}>
+              <div style={{ fontSize:8.5, color:th.accentDimmed, letterSpacing:2.5, fontWeight:700, marginBottom:8 }}>{t.about}</div>
+              <div style={{ fontSize:8.5, color:th.textMuted, lineHeight:1.8 }}>
+                <div>SpaceMonitor · {t.version} 2.0</div>
+                <div>Data: CelesTrak · NASA · NOAA</div>
+                <div>TLE updated every hour</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </>)}
 
     </div>
   )
