@@ -279,6 +279,9 @@ const Globe = forwardRef<GlobeHandle, {
           const v=geoToVec3(sat._pos.lat,sat._pos.lon,sat._pos.alt)
           posArr[i*3]=v.x;posArr[i*3+1]=v.y;posArr[i*3+2]=v.z
           localPosRef.current[sat.norad]=sat._pos
+        } else {
+          // No TLE propagation result — park far off-scene so it's invisible
+          posArr[i*3]=1e4;posArr[i*3+1]=0;posArr[i*3+2]=0
         }
         colArr[i*3]=rgb[0];colArr[i*3+1]=rgb[1];colArr[i*3+2]=rgb[2]
       })

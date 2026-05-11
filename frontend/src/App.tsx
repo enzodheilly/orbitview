@@ -89,6 +89,9 @@ export default function App() { // ⬅️ DEVENU APP()
   const t = T[language]
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
+  const [satCollapsed, setSatCollapsed] = useState(() => {
+    try { return localStorage.getItem('sm_sat_collapsed') === 'true' } catch { return false }
+  })
   const [globeMaximized, setGlobeMaximized] = useState(false)
 
   const [clock, setClock] = useState('')
@@ -99,7 +102,9 @@ export default function App() { // ⬅️ DEVENU APP()
   const [loadingDetail, setLoadingDetail] = useState(false)
   const [liveVideoId, setLiveVideoId] = useState<string | null>(null)
   const [liveVideoTitle, setLiveVideoTitle] = useState<string>('')
-  const [openPanel, setOpenPanel] = useState<Panel>('satellites')
+  const [openPanel, setOpenPanel] = useState<Panel>(() => {
+    try { return (localStorage.getItem('sm_open_panel') as Panel) ?? 'satellites' } catch { return 'satellites' }
+  })
   
   const [reentryList, setReentryList] = useState<any[]>([])
   const [historyList, setHistoryList] = useState<Launch[]>([])
@@ -135,7 +140,7 @@ export default function App() { // ⬅️ DEVENU APP()
   const _llFetchStarted = useRef(false)
   const locationEnabledRef = useRef(false)
 
-  const [dashboardVh, setDashboardVh] = useState(42)
+  const [dashboardVh, setDashboardVh] = useState(35)
   const globeVh = 100 - dashboardVh
 
   const onResizeStart = (e: React.MouseEvent) => {
@@ -156,10 +161,38 @@ export default function App() { // ⬅️ DEVENU APP()
   }
 
   useEffect(() => {
+    try { localStorage.setItem('sm_open_panel', openPanel ?? '') } catch { /* ignore */ }
+  }, [openPanel])
+
+  useEffect(() => {
+    try { localStorage.setItem('sm_sat_collapsed', String(satCollapsed)) } catch { /* ignore */ }
+  }, [satCollapsed])
+
+  // Reset country filter si le pays sélectionné n'a plus de satellite dans les catégories actives
+  useEffect(() => {
+    if (countryFilter === 'ALL') return
+    const stillValid = satellites.some((s: any) => {
+      if (!activeFilters.has(s.category as SatCategory)) return false
+      const norm: (c: string) => string = (c) => {
+        const NORM: Record<string,string> = {
+          'US':'US','USA':'US','GBR':'GBR','UK':'GBR','GB':'GBR','BRIT':'GBR',
+          'CIS':'CIS','RU':'CIS','RUS':'CIS','SU':'CIS','RSU':'CIS',
+          'PRC':'PRC','CN':'PRC','CHN':'PRC','IND':'IND','IN':'IND',
+          'JPN':'JPN','JP':'JPN','KOR':'KOR','KR':'KOR','FR':'FR','FRA':'FR',
+          'ESA':'ESA','EU':'ESA','EUME':'ESA',
+        }
+        return NORM[(c||'').toUpperCase().trim()] ?? (c||'').toUpperCase().trim()
+      }
+      return norm(s.country || s.countryCode || '') === countryFilter
+    })
+    if (!stillValid) setCountryFilter('ALL')
+  }, [activeFilters])
+
+  useEffect(() => {
     if (_satFetchStarted.current) return
     _satFetchStarted.current = true
 
-    const CACHE_KEY = 'spacemonitor_sats_v2'
+    const CACHE_KEY = 'spacemonitor_sats_v3'
     const CACHE_TTL = 4 * 3600 * 1000
 
     const propagateAndApply = (sats: any[]): Promise<any[]> =>
@@ -611,6 +644,40 @@ const handleTrackReentry = (d: any) => {
   }
   const normCountry = (c: string) => COUNTRY_NORM[(c || '').toUpperCase().trim()] ?? (c || '').toUpperCase().trim()
 
+  const COUNTRY_DISPLAY: Record<string, string> = {
+    'US':'🇺🇸 USA','PRC':'🇨🇳 Chine','CIS':'🇷🇺 Russie','FR':'🇫🇷 France','ESA':'🇪🇺 ESA',
+    'IND':'🇮🇳 Inde','JPN':'🇯🇵 Japon','GBR':'🇬🇧 Royaume-Uni','DEU':'🇩🇪 Allemagne',
+    'ITA':'🇮🇹 Italie','ESP':'🇪🇸 Espagne','NLD':'🇳🇱 Pays-Bas','SWE':'🇸🇪 Suède',
+    'NOR':'🇳🇴 Norvège','BEL':'🇧🇪 Belgique','CHE':'🇨🇭 Suisse','POL':'🇵🇱 Pologne',
+    'CZE':'🇨🇿 Rép. Tchèque','KOR':'🇰🇷 Corée du Sud','PRK':'🇰🇵 Corée du Nord',
+    'AUS':'🇦🇺 Australie','CAN':'🇨🇦 Canada','BRA':'🇧🇷 Brésil','ARG':'🇦🇷 Argentine',
+    'MEX':'🇲🇽 Mexique','COL':'🇨🇴 Colombie','ISR':'🇮🇱 Israël','IRAN':'🇮🇷 Iran',
+    'TUR':'🇹🇷 Turquie','SAU':'🇸🇦 Arabie Saoudite','UAE':'🇦🇪 Émirats Arabes',
+    'QAT':'🇶🇦 Qatar','PAK':'🇵🇰 Pakistan','BGD':'🇧🇩 Bangladesh','IDN':'🇮🇩 Indonésie',
+    'MYS':'🇲🇾 Malaisie','THA':'🇹🇭 Thaïlande','VNM':'🇻🇳 Vietnam','PHL':'🇵🇭 Philippines',
+    'SGP':'🇸🇬 Singapour','NGA':'🇳🇬 Nigeria','ZAF':'🇿🇦 Afrique du Sud','EGY':'🇪🇬 Égypte',
+    'ETH':'🇪🇹 Éthiopie','GHA':'🇬🇭 Ghana','KEN':'🇰🇪 Kenya','UKR':'🇺🇦 Ukraine',
+    'KAZ':'🇰🇿 Kazakhstan','LUX':'🇱🇺 Luxembourg','PRT':'🇵🇹 Portugal','GRC':'🇬🇷 Grèce',
+    'ROU':'🇷🇴 Roumanie','HUN':'🇭🇺 Hongrie','NZL':'🇳🇿 Nouvelle-Zélande',
+    'ISS':'🛸 ISS','GLOB':'🌐 Global',
+  }
+
+  // Pays présents dans au moins une des catégories actives
+  const availableCountryCodes = (() => {
+    const codes = new Set<string>()
+    allSats.forEach((s: any) => {
+      if (activeFilters.has(s.category as SatCategory)) {
+        const code = normCountry(s.country || s.countryCode || '')
+        if (code) codes.add(code)
+      }
+    })
+    return [...codes].sort((a, b) => {
+      const na = (COUNTRY_DISPLAY[a] || a).replace(/\S+\s/, '')
+      const nb = (COUNTRY_DISPLAY[b] || b).replace(/\S+\s/, '')
+      return na.localeCompare(nb, 'fr')
+    })
+  })()
+
   const filteredSats = allSats.filter(s => {
     const matchesCat = activeFilters.has(s.category);
     const matchesSearch = s.name.toLowerCase().includes(searchQuery.toLowerCase()) || s.norad.includes(searchQuery);
@@ -885,13 +952,19 @@ const handleTrackReentry = (d: any) => {
           telephonie: { icon: '📡', label: 'TÉLÉPHONIE' },
         }
         return (
-          <div style={{ position: 'absolute', top: 84, left: 16, width: 260, maxHeight: panelMaxH2, zIndex: 40, display: 'flex', flexDirection: 'column', background: 'rgba(13,16,28,0.98)', backdropFilter: 'blur(20px)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6, boxShadow: '0 8px 32px rgba(0,0,0,0.7)', overflow: 'hidden' }}>
+          <div style={{ position: 'absolute', top: 84, left: 16, width: 260, maxHeight: satCollapsed ? 'none' : panelMaxH2, zIndex: 40, display: 'flex', flexDirection: 'column', background: 'rgba(13,16,28,0.98)', backdropFilter: 'blur(20px)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6, boxShadow: '0 8px 32px rgba(0,0,0,0.7)', overflow: 'hidden' }}>
 
-            {/* Header COUCHES */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '13px 16px', borderBottom: '1px solid rgba(255,255,255,0.07)', flexShrink: 0 }}>
+            {/* Header COUCHES — clic = réduit/agrandi */}
+            <div onClick={() => setSatCollapsed(v => !v)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '13px 16px', borderBottom: satCollapsed ? 'none' : '1px solid rgba(255,255,255,0.07)', flexShrink: 0, cursor: 'pointer' }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.03)' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+            >
               <span style={{ fontFamily: 'Orbitron, sans-serif', fontSize: 12, fontWeight: 700, letterSpacing: 3, color: 'rgba(255,255,255,0.9)' }}>COUCHES</span>
-              <button onClick={() => { resetAll(); setOpenPanel(null); }} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.35)', cursor: 'pointer', fontSize: 12, lineHeight: 1, padding: 0 }}>▼</button>
+              <span style={{ color: 'rgba(0,229,255,0.5)', fontSize: 11, lineHeight: 1 }}>{satCollapsed ? '▶' : '▼'}</span>
             </div>
+
+
+            {!satCollapsed && <>
 
             {/* Recherche — fixe */}
             <div style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', flexShrink: 0 }}>
@@ -911,61 +984,12 @@ const handleTrackReentry = (d: any) => {
                 onChange={(e) => setCountryFilter(e.target.value)}
                 style={{ width: '100%', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: countryFilter === 'ALL' ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.85)', fontSize: 10, padding: '6px 9px', outline: 'none', fontFamily: 'inherit', borderRadius: 4, cursor: 'pointer', boxSizing: 'border-box' as const }}
               >
-                <option value="ALL">🌍 Tous les pays</option>
-                <option value="US">🇺🇸 USA</option>
-                <option value="PRC">🇨🇳 Chine</option>
-                <option value="CIS">🇷🇺 Russie</option>
-                <option value="FR">🇫🇷 France</option>
-                <option value="ESA">🇪🇺 ESA</option>
-                <option value="IND">🇮🇳 Inde</option>
-                <option value="JPN">🇯🇵 Japon</option>
-                <option value="GBR">🇬🇧 Royaume-Uni</option>
-                <option value="DEU">🇩🇪 Allemagne</option>
-                <option value="ITA">🇮🇹 Italie</option>
-                <option value="ESP">🇪🇸 Espagne</option>
-                <option value="NLD">🇳🇱 Pays-Bas</option>
-                <option value="SWE">🇸🇪 Suède</option>
-                <option value="NOR">🇳🇴 Norvège</option>
-                <option value="BEL">🇧🇪 Belgique</option>
-                <option value="CHE">🇨🇭 Suisse</option>
-                <option value="POL">🇵🇱 Pologne</option>
-                <option value="CZE">🇨🇿 Rép. Tchèque</option>
-                <option value="KOR">🇰🇷 Corée du Sud</option>
-                <option value="PRK">🇰🇵 Corée du Nord</option>
-                <option value="AUS">🇦🇺 Australie</option>
-                <option value="CAN">🇨🇦 Canada</option>
-                <option value="BRA">🇧🇷 Brésil</option>
-                <option value="ARG">🇦🇷 Argentine</option>
-                <option value="MEX">🇲🇽 Mexique</option>
-                <option value="COL">🇨🇴 Colombie</option>
-                <option value="ISR">🇮🇱 Israël</option>
-                <option value="IRAN">🇮🇷 Iran</option>
-                <option value="TUR">🇹🇷 Turquie</option>
-                <option value="SAU">🇸🇦 Arabie Saoudite</option>
-                <option value="UAE">🇦🇪 Émirats Arabes</option>
-                <option value="QAT">🇶🇦 Qatar</option>
-                <option value="PAK">🇵🇰 Pakistan</option>
-                <option value="BGD">🇧🇩 Bangladesh</option>
-                <option value="IDN">🇮🇩 Indonésie</option>
-                <option value="MYS">🇲🇾 Malaisie</option>
-                <option value="THA">🇹🇭 Thaïlande</option>
-                <option value="VNM">🇻🇳 Vietnam</option>
-                <option value="PHL">🇵🇭 Philippines</option>
-                <option value="SGP">🇸🇬 Singapour</option>
-                <option value="NGA">🇳🇬 Nigeria</option>
-                <option value="ZAF">🇿🇦 Afrique du Sud</option>
-                <option value="EGY">🇪🇬 Égypte</option>
-                <option value="ETH">🇪🇹 Éthiopie</option>
-                <option value="GHA">🇬🇭 Ghana</option>
-                <option value="KEN">🇰🇪 Kenya</option>
-                <option value="UKR">🇺🇦 Ukraine</option>
-                <option value="KAZ">🇰🇿 Kazakhstan</option>
-                <option value="LUX">🇱🇺 Luxembourg</option>
-                <option value="PRT">🇵🇹 Portugal</option>
-                <option value="GRC">🇬🇷 Grèce</option>
-                <option value="ROU">🇷🇴 Roumanie</option>
-                <option value="HUN">🇭🇺 Hongrie</option>
-                <option value="NZL">🇳🇿 Nouvelle-Zélande</option>
+                <option value="ALL">🌍 Tous les pays ({availableCountryCodes.length})</option>
+                {availableCountryCodes.map(code => (
+                  <option key={code} value={code}>
+                    {COUNTRY_DISPLAY[code] || `🏳️ ${code}`}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -1022,6 +1046,8 @@ const handleTrackReentry = (d: any) => {
                 })
               )}
             </div>
+
+            </>}
           </div>
         )
       })()}
