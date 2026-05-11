@@ -111,27 +111,110 @@ const NAME_IMAGE: { match: string; src: string }[] = [
 { match: 'zvezda', src: '/satellites/images/zvezda.jpg' },
 { match: 'unity', src: '/satellites/images/unity.jpg' },
 { match: 'zarya', src: '/satellites/images/zarya.jpg' },
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+{ match: 'progress-ms 34', src: '/satellites/images/progress-ms-34.jpg' },
+{ match: 'cygnus ng-24', src: '/satellites/images/cygnus-ng-24.jpg' },
+{ match: 'progress-ms 33', src: '/satellites/images/progress-ms-33.jpg' },
+{ match: 'crew dragon 12', src: '/satellites/images/crew-dragon-12.jpg' },
+{ match: 'soyuz-ms 28', src: '/satellites/images/soyuz-ms-28.jpg' },
+{ match: 'shenzhou-22', src: '/satellites/images/shenzhou-22.jpg' },
+{ match: 'htv-x1', src: '/satellites/images/htv-x1.jpg' },
+{ match: 'wentian', src: '/satellites/images/css.jpg' },
+{ match: 'mengtian', src: '/satellites/images/css.jpg' },
+{ match: 'tianhe', src: '/satellites/images/css.jpg' },
+{ match: 'poisk', src: '/satellites/images/poisk.jpg' },
+{ match: 'glonass', src: '/satellites/images/glonass.jpg' },
+{ match: 'navstar', src: '/satellites/images/navstar.jpg' },
+{ match: 'gps', src: '/satellites/images/gps.jpg' },
+{ match: 'beidou', src: '/satellites/images/beidou.jpg' },
+{ match: 'galileo', src: '/satellites/images/galileo.jpg' },
+{ match: 'fengyun', src: '/satellites/images/fengyun.jpg' },
+{ match: 'sentinel-6b', src: '/satellites/images/sentinel-6b.jpg' },
+{ match: 'sentinel 1a', src: '/satellites/images/sentinel-1a.jpg' },
+{ match: 'sentinel 1b', src: '/satellites/images/sentinel-1a.jpg' },
+{ match: 'sentinel 1c', src: '/satellites/images/sentinel-1a.jpg' },
+{ match: 'sentinel-1d', src: '/satellites/images/sentinel-1a.jpg' },
+{ match: 'metop sg-a', src: '/satellites/images/metop-sg-a.jpg' },
+{ match: 'metop-a', src: '/satellites/images/metop.jpg' },
+{ match: 'metop-b', src: '/satellites/images/metop.jpg' },
+{ match: 'metop-c', src: '/satellites/images/metop.jpg' },
+{ match: 'sentinel 2a', src: '/satellites/images/sentinel-2a.jpg' },
+{ match: 'sentinel 2b', src: '/satellites/images/sentinel-2a.jpg' },
+{ match: 'sentinel-2c', src: '/satellites/images/sentinel-2a.jpg' },
+{ match: 'sentinel 3a', src: '/satellites/images/sentinel-3a.jpg' },
+{ match: 'sentinel 3b', src: '/satellites/images/sentinel-3a.jpg' },
+{ match: 'sentinel 5p', src: '/satellites/images/sentinel-5p.jpg' },
+{ match: 'esa/goes', src: '/satellites/images/esa-goes.jpg' },
+{ match: 'himawari 1', src: '/satellites/images/himawari-1.jpg' },
+{ match: 'himawari 2', src: '/satellites/images/himawari-1.jpg' },
+{ match: 'himawari 3', src: '/satellites/images/himawari-1.jpg' },
+{ match: 'himawari 4', src: '/satellites/images/himawari-1.jpg' },
+{ match: 'himawari 5', src: '/satellites/images/himawari-1.jpg' },
+{ match: 'himawari 6', src: '/satellites/images/himawari-6.jpg' },
+{ match: 'himawari 7', src: '/satellites/images/himawari-6.jpg' },
+{ match: 'himawari-8', src: '/satellites/images/himawari-8.jpg' },
+{ match: 'himawari-9', src: '/satellites/images/himawari-8.jpg' },
+{ match: 'meteor 1', src: '/satellites/images/meteor-1.jpg' },
+{ match: 'meteor 2', src: '/satellites/images/meteor-1.jpg' },
+{ match: 'meteor 3', src: '/satellites/images/meteor-3.jpg' },
+{ match: 'meteor priroda', src: '/satellites/images/meteor-3.jpg' },
+{ match: 'meteor-m', src: '/satellites/images/meteor-m.jpg' },
+{ match: 'noaa 21', src: '/satellites/images/noaa15.jpg' },
+{ match: 'noaa 20', src: '/satellites/images/noaa15.jpg' },
+{ match: 'noaa 15', src: '/satellites/images/noaa15.jpg' },
+{ match: 'noaa 16', src: '/satellites/images/noaa15.jpg' },
+{ match: 'noaa 17', src: '/satellites/images/noaa15.jpg' },
+{ match: 'noaa 18', src: '/satellites/images/noaa15.jpg' },
+{ match: 'noaa 19', src: '/satellites/images/noaa15.jpg' },
+{ match: 'noaa 10', src: '/satellites/images/noaa6.jpg' },
+{ match: 'noaa 11', src: '/satellites/images/noaa6.jpg' },
+{ match: 'noaa 12', src: '/satellites/images/noaa6.jpg' },
+{ match: 'noaa 13', src: '/satellites/images/noaa6.jpg' },
+{ match: 'noaa 14', src: '/satellites/images/noaa6.jpg' },
+{ match: 'noaa 1', src: '/satellites/images/noaa.jpg' },
+{ match: 'noaa 2', src: '/satellites/images/noaa.jpg' },
+{ match: 'noaa 3', src: '/satellites/images/noaa.jpg' },
+{ match: 'noaa 4', src: '/satellites/images/noaa.jpg' },
+{ match: 'noaa 5', src: '/satellites/images/noaa.jpg' },
+{ match: 'noaa 6', src: '/satellites/images/noaa6.jpg' },
+{ match: 'noaa 7', src: '/satellites/images/noaa6.jpg' },
+{ match: 'noaa 8', src: '/satellites/images/noaa6.jpg' },
+{ match: 'noaa 9', src: '/satellites/images/noaa6.jpg' },
+{ match: 'noaa b', src: '/satellites/images/noaa6.jpg' },
+{ match: 'goes 19', src: '/satellites/images/goes16.jpg' },
+{ match: 'goes 18', src: '/satellites/images/goes16.jpg' },
+{ match: 'goes 17', src: '/satellites/images/goes16.jpg' },
+{ match: 'goes 16', src: '/satellites/images/goes16.jpg' },
+{ match: 'goes 15', src: '/satellites/images/goes15.jpg' },
+{ match: 'goes 14', src: '/satellites/images/goes15.jpg' },
+{ match: 'goes 13', src: '/satellites/images/goes15.jpg' },
+{ match: 'goes 12', src: '/satellites/images/goes15.jpg' },
+{ match: 'goes 11', src: '/satellites/images/goes15.jpg' },
+{ match: 'goes 10', src: '/satellites/images/goes15.jpg' },
+{ match: 'goes 9', src: '/satellites/images/goes15.jpg' },
+{ match: 'goes 8', src: '/satellites/images/goes8.jpg' },
+{ match: 'goes 7', src: '/satellites/images/goes8.jpg' },
+{ match: 'goes 6', src: '/satellites/images/goes8.jpg' },
+{ match: 'goes 5', src: '/satellites/images/goes8.jpg' },
+{ match: 'goes 4', src: '/satellites/images/goes8.jpg' },
+{ match: 'goes 3', src: '/satellites/images/goes8.jpg' },
+{ match: 'goes 2', src: '/satellites/images/goes8.jpg' },
+{ match: 'goes 1', src: '/satellites/images/goes8.jpg' },
+{ match: 'landsat 9', src: '/satellites/images/landsat4.jpg' },
+{ match: 'landsat 8', src: '/satellites/images/landsat4.jpg' },
+{ match: 'landsat 7', src: '/satellites/images/landsat3.jpg' },
+{ match: 'landsat 6', src: '/satellites/images/landsat8.jpg' },
+{ match: 'landsat 5', src: '/satellites/images/landsat2.jpg' },
+{ match: 'landsat 4', src: '/satellites/images/landsat2.jpg' },
+{ match: 'landsat 3', src: '/satellites/images/landsat1.jpg' },
+{ match: 'landsat 2', src: '/satellites/images/landsat1.jpg' },
+{ match: 'landsat 1', src: '/satellites/images/landsat1.jpg' },
+{ match: 'dove 4', src: '/satellites/images/dove1.jpg' },
+{ match: 'dove 3', src: '/satellites/images/dove1.jpg' },
+{ match: 'dove 2', src: '/satellites/images/dove2.jpg' },
+{ match: 'dove 1', src: '/satellites/images/dove3.jpg' },
+{ match: 'dove pioneer', src: '/satellites/images/dove3.jpg' },
+{ match: 'flock', src: '/satellites/images/flock.jpg' },
+{ match: 'skysat', src: '/satellites/images/skysat.jpg' },
 
 
 ]
@@ -158,11 +241,10 @@ export default function SatelliteImage({ name, category }: Props) {
 
   return (
     <div style={{ position: 'relative', height: 160, background: '#000', overflow: 'hidden', flexShrink: 0 }}>
-      <img
-        src={src}
-        alt={name}
-        style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-      />
+      {/* Background flouté pour éviter les barres noires */}
+      <img src={src} alt="" aria-hidden style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', filter: 'blur(14px) brightness(0.35)', transform: 'scale(1.12)', pointerEvents: 'none' }} />
+      {/* Image principale — contient l'image entière sans crop */}
+      <img src={src} alt={name} style={{ position: 'relative', width: '100%', height: '100%', objectFit: 'contain', objectPosition: 'center', display: 'block' }} />
       <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 48, background: 'linear-gradient(to top, rgba(0,0,0,0.85), transparent)', pointerEvents: 'none' }} />
     </div>
   )

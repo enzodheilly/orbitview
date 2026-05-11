@@ -4,7 +4,7 @@ const BASE = '/api'  // Proxy Vite → Symfony :8080
 
 export async function fetchAllSatellites(): Promise<SatelliteDTO[]> {
   // Vérifier le cache localStorage (valide 2h)
-  const CACHE_KEY = 'orbitview_satellites_v2'
+  const CACHE_KEY = 'orbitview_satellites_v3'
   const CACHE_TTL = 2 * 3600 * 1000
   try {
     const cached = localStorage.getItem(CACHE_KEY)

@@ -32,6 +32,22 @@ interface SatState {
 }
 
 const ALL_CATS: SatCategory[] = ['station', 'gps', 'weather', 'science', 'telephonie', 'starlink']
+const FILTERS_KEY = 'sm_active_filters'
+
+function loadFilters(): Set<SatCategory> {
+  try {
+    const raw = localStorage.getItem(FILTERS_KEY)
+    if (raw) {
+      const arr = JSON.parse(raw) as SatCategory[]
+      return new Set(arr.filter(c => ALL_CATS.includes(c)))
+    }
+  } catch { /* ignore */ }
+  return new Set(ALL_CATS)
+}
+
+function saveFilters(filters: Set<SatCategory>) {
+  try { localStorage.setItem(FILTERS_KEY, JSON.stringify([...filters])) } catch { /* ignore */ }
+}
 
 export const useSatStore = create<SatState>((set, get) => ({
   satellites: [],
@@ -39,7 +55,7 @@ export const useSatStore = create<SatState>((set, get) => ({
   loading: false,
   error: null,
   selectedNorad: null,
-  activeFilters: new Set(ALL_CATS),
+  activeFilters: loadFilters(),
   target: null,
   conjunctionPair: null,
   userPosition: null,
@@ -65,6 +81,7 @@ export const useSatStore = create<SatState>((set, get) => ({
   toggleFilter: (cat) => {
     const filters = new Set(get().activeFilters)
     if (filters.has(cat)) { filters.delete(cat) } else { filters.add(cat) }
+    saveFilters(filters)
     set({ activeFilters: filters })
   },
 
