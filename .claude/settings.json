@@ -10,7 +10,32 @@
       "Bash(docker compose *)",
       "Bash(curl -s \"http://localhost:8080/api/launches/detail?name=NROL-172\")",
       "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('mission:', d.get\\('mission'\\)\\); print\\('crew:', d.get\\('rocket',{}\\).get\\('spacecraftflight'\\)\\); print\\('vidURLs:', d.get\\('vidURLs',[]\\)[:1]\\)\")",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(git stash *)",
+      "Bash(git checkout *)",
+      "Bash(npx vite *)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(json.dumps\\({k:d[k] for k in ['main','module','exports','browser'] if k in d}, indent=2\\)\\)\")",
+      "Bash(xargs du -sh)",
+      "Bash(node -e ' *)",
+      "Bash(curl -sL \"https://cdn.jsdelivr.net/npm/satellite.js@5.0.0/dist/satellite.min.js\" -o \"/Users/dheillyenzo/Documents/tracker_spacial/frontend/public/satellite.min.js\")",
+      "Bash(./node_modules/.bin/tsc --noEmit)",
+      "Bash(npm install *)",
+      "Bash(echo \"Exit: $?\")",
+      "Bash(npx --prefix frontend tsc -p frontend/tsconfig.app.json --noEmit)",
+      "Bash(cp /Users/dheillyenzo/Documents/tracker_spacial/.claude/worktrees/agent-a96a482886947f5f4/frontend/src/App.tsx /Users/dheillyenzo/Documents/tracker_spacial/frontend/src/App.tsx *)",
+      "Bash(grep -n \"apod.*ApodPanel\\\\|NeoPanel\\\\|JwstPanel\\\\|MoonPanel\\\\|SolarFlares\\\\|</div>.*</div>.*$\" /Users/dheillyenzo/Documents/tracker_spacial/frontend/src/App.tsx)",
+      "Bash(sed -i '' 's/position: '\\\\''absolute'\\\\'', top: 100, left: 16, width: 320, maxHeight: '\\\\''calc\\(100vh - 180px\\)'\\\\''/position: '\\\\''absolute'\\\\'', top: 84, left: 16, width: 320, maxHeight: maxHeight ?? '\\\\''calc\\(100vh - 180px\\)'\\\\''/' /Users/dheillyenzo/Documents/tracker_spacial/frontend/src/components/panels/MoonPanel.tsx)",
+      "Bash(sed -i '' 's/position: '\\\\''absolute'\\\\'', top: 100, left: 16, width: 320, maxHeight: '\\\\''calc\\(100vh - 180px\\)'\\\\''/position: '\\\\''absolute'\\\\'', top: 84, left: 16, width: 320, maxHeight: maxHeight ?? '\\\\''calc\\(100vh - 180px\\)'\\\\''/' /Users/dheillyenzo/Documents/tracker_spacial/frontend/src/components/panels/NeoPanel.tsx)",
+      "Bash(sed -i '' 's/position: '\\\\''absolute'\\\\'', top: 100, left: 16, width: 320, maxHeight: '\\\\''calc\\(100vh - 180px\\)'\\\\''/position: '\\\\''absolute'\\\\'', top: 84, left: 16, width: 320, maxHeight: maxHeight ?? '\\\\''calc\\(100vh - 180px\\)'\\\\''/' /Users/dheillyenzo/Documents/tracker_spacial/frontend/src/components/panels/ApodPanel.tsx)",
+      "Bash(sed -i '' 's/position: '\\\\''absolute'\\\\'', top: 100, left: 16, width: 400, maxHeight: '\\\\''calc\\(100vh - 180px\\)'\\\\''/position: '\\\\''absolute'\\\\'', top: 84, left: 16, width: 400, maxHeight: maxHeight ?? '\\\\''calc\\(100vh - 180px\\)'\\\\''/' /Users/dheillyenzo/Documents/tracker_spacial/frontend/src/components/panels/JwstPanel.tsx)",
+      "Bash(sed -i '' 's/position: '\\\\''absolute'\\\\'', top: 100, left: 16, width: 320, maxHeight: '\\\\''calc\\(100vh - 180px\\)'\\\\''/position: '\\\\''absolute'\\\\'', top: 84, left: 16, width: 320, maxHeight: maxHeight ?? '\\\\''calc\\(100vh - 180px\\)'\\\\''/' /Users/dheillyenzo/Documents/tracker_spacial/frontend/src/components/panels/SolarFlaresPanel.tsx)",
+      "Bash(sed -i '' 's/top: 100, left: 16, width: 290, maxHeight: panelMaxH,/top: 84, left: 16, width: 290, maxHeight: panelMaxH2,/g' /Users/dheillyenzo/Documents/tracker_spacial/frontend/src/App.tsx)",
+      "Bash(sed -i '' 's/top: 100, left: 16, width: 300, maxHeight: panelMaxH,/top: 84, left: 16, width: 300, maxHeight: panelMaxH2,/g' /Users/dheillyenzo/Documents/tracker_spacial/frontend/src/App.tsx)",
+      "Bash(sed -i '' 's/top: 100, left: 332, width: 340, maxHeight: panelMaxH,/top: 84, left: 332, width: 340, maxHeight: panelMaxH2,/g' /Users/dheillyenzo/Documents/tracker_spacial/frontend/src/App.tsx)",
+      "Bash(sed -i '' 's/top: 100, right: 16, width: 370, maxHeight: panelMaxH,/top: 84, right: 16, width: 370, maxHeight: panelMaxH2,/g' /Users/dheillyenzo/Documents/tracker_spacial/frontend/src/App.tsx)"
+    ],
+    "additionalDirectories": [
+      "/Users/dheillyenzo/Documents/tracker_spacial/.claude/worktrees/agent-a96a482886947f5f4/frontend/src/components/panels"
     ]
   }
 }

@@ -46,7 +46,7 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
   )
 }
 
-export default function SpaceDashboard({ spaceWeather, news, launches, issCrew, solarWind, nasaLiveId, satellites, positions, conjunctionAlerts, onGoToPad }: Props) {
+export default function SpaceDashboard({ spaceWeather, news, launches, issCrew, solarWind, nasaLiveId, satellites, positions, onGoToPad }: Props) {
   const [apodList, setApodList] = useState<any[]>([])
   const [neoData, setNeoData] = useState<{ count: number; hazardous: number; list: any[] } | null>(null)
   const [solarFlares, setSolarFlares] = useState<any[]>([])

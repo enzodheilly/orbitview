@@ -6,16 +6,32 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      // Toutes les requêtes /api → Symfony (port 8080)
       '/api': {
         target: 'http://localhost:8080',
         changeOrigin: true,
-        rewrite: (path) => path, // garder le préfixe /api
+        rewrite: (path) => path,
       },
     },
   },
+  optimizeDeps: {
+    include: ['react', 'react-dom', 'zustand'],
+    exclude: ['satellite.js'],
+  },
+  worker: {
+    format: 'es',
+  },
   build: {
-    outDir: '../backend/public/app', // build servi par Nginx
+    target: 'esnext',
+    outDir: '../backend/public/app',
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'three': ['three'],
+          'react-vendor': ['react', 'react-dom'],
+          'zustand': ['zustand'],
+        },
+      },
+    },
   },
 })

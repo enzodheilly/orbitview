@@ -1,4 +1,4 @@
-importScripts('https://cdn.jsdelivr.net/npm/satellite.js@5.0.0/dist/satellite.min.js')
+importScripts('/satellite.min.js')
 
 self.onmessage = function(e) {
   const { sats, timestamp } = e.data
