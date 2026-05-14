@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 
+const EXTRA_LIVE_IDS = ['OKQEMp2555A', 'fO9e9jnhYK8']
+
 interface Props {
   spaceWeather: any
   news: { title: string; summary: string; url: string; published: string; site: string }[]
@@ -125,11 +127,11 @@ export default function SpaceDashboard({ spaceWeather, news, launches, issCrew, 
               {nextLaunch && <><span style={{ color: 'rgba(255,255,255,0.2)' }}>·</span> PROCHAIN : <Countdown date={nextLaunch.date} style={{ fontSize: 9 }} /></>}
             </span>
           </SectionHeader>
-          {/* YouTube — aspect ratio 16/9, pas de coupure */}
+          {/* NASA TV principal — 16:9 pleine largeur col */}
           <div style={{ width: '100%', aspectRatio: '16/9', background: '#000', flexShrink: 0 }}>
             {nasaLiveId ? (
               <iframe
-                src={`https://www.youtube.com/embed/${nasaLiveId}?autoplay=1&mute=1&controls=1`}
+                src={`https://www.youtube.com/embed/${nasaLiveId}?autoplay=1&mute=1&rel=0&modestbranding=1`}
                 style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
                 allow="autoplay; encrypted-media; fullscreen"
               />
@@ -142,6 +144,18 @@ export default function SpaceDashboard({ spaceWeather, news, launches, issCrew, 
                 </a>
               </div>
             )}
+          </div>
+          {/* 2 lives supplémentaires — compacts, côte à côte sous le live NASA */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', background: '#000', flexShrink: 0, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+            {EXTRA_LIVE_IDS.map((id, i) => (
+              <div key={id} style={{ height: 100, overflow: 'hidden', borderRight: i === 0 ? '1px solid rgba(255,255,255,0.08)' : undefined }}>
+                <iframe
+                  src={`https://www.youtube.com/embed/${id}?autoplay=1&mute=1&rel=0&modestbranding=1`}
+                  style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
+                  allow="autoplay; encrypted-media; fullscreen"
+                />
+              </div>
+            ))}
           </div>
           {/* Lancements */}
           <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>

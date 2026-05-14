@@ -125,12 +125,7 @@ export default function App() { // ⬅️ DEVENU APP()
   const [livePos, setLivePos] = useState<{lat:number,lon:number,alt:number,vel:number}|null>(null)
   const [selectedAlert, setSelectedAlert] = useState<ConjunctionAlert | null>(null)
   const [solarWind, setSolarWind] = useState<{speed: number, density: number} | null>(null)
-  const [nasaLiveId, setNasaLiveId] = useState<string | null>(null)
-  const [_esaLiveId, setEsaLiveId] = useState<string | null>(null)
-  const [_spacexLiveId, setSpacexLiveId] = useState<string | null>(null)
-  const [_worldcamLiveId, setWorldcamLiveId] = useState<string | null>(null)
-  const [_senLiveId, setSenLiveId] = useState<string | null>(null)
-  const [_afarLiveId, setAfarLiveId] = useState<string | null>(null)
+  const [nasaLiveId] = useState<string | null>('FuuC4dpSQ1M')
 
   const conjunctionAlerts = useConjunctionAlerts(60)
   const { userPos, passes, loading: visLoading, error: visError, requestLocation } = useVisibility(10)
@@ -139,7 +134,6 @@ export default function App() { // ⬅️ DEVENU APP()
   const globeWrapperRef = useRef<HTMLDivElement>(null)
   const globeRef = useRef<GlobeHandle>(null)
   const _satFetchStarted = useRef(false)
-  const _ytFetchStarted = useRef(false)
   const _llFetchStarted = useRef(false)
   const locationEnabledRef = useRef(false)
 
@@ -257,8 +251,7 @@ export default function App() { // ⬅️ DEVENU APP()
         try { localStorage.setItem(CACHE_KEY, JSON.stringify({ data: nonDebrisSats, ts: Date.now() })) } catch { /* quota */ }
       }
 
-      // Step 2: debris always fetched fresh (too large for localStorage)
-      // Use limit=2000 to reduce pages from ~31 to ~8
+      // Step 2: debris — le backend filtre epoch > 2 ans, retourne ~14 500 objets actifs
       const allDebris: any[] = []
       let debrisOffset = 0
       while (true) {
@@ -377,45 +370,6 @@ export default function App() { // ⬅️ DEVENU APP()
   }, [timezone])
 
   useEffect(() => {
-    if (_ytFetchStarted.current) return
-    _ytFetchStarted.current = true
-    const key = import.meta.env.VITE_YOUTUBE_API_KEY
-    if (!key) return
-    const YT_CACHE_KEY = 'spacemonitor_yt_live_v1'
-    const YT_TTL_OK = 30 * 60 * 1000
-    const YT_TTL_FAIL = 2 * 3600 * 1000
-    try {
-      const raw = sessionStorage.getItem(YT_CACHE_KEY)
-      if (raw) {
-        const { data, ts, failed } = JSON.parse(raw)
-        if (Date.now() - ts < (failed ? YT_TTL_FAIL : YT_TTL_OK)) {
-          if (data.nasa) setNasaLiveId(data.nasa)
-          if (data.esa) setEsaLiveId(data.esa)
-          if (data.spacex) setSpacexLiveId(data.spacex)
-          if (data.worldcam) setWorldcamLiveId(data.worldcam)
-          if (data.sen) setSenLiveId(data.sen)
-          if (data.afar) setAfarLiveId(data.afar)
-          return
-        }
-      }
-    } catch { /* ignore */ }
-    const fetchLive = (channelId: string): Promise<string|null> =>
-      fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&channelId=${channelId}&eventType=live&type=video&maxResults=1&key=${key}`)
-        .then(r => r.ok ? r.json() : null).then((d: any) => d?.items?.[0]?.id?.videoId ?? null).catch(()=>null)
-    ;(async () => {
-      const [nasa, esa, spacex, worldcam, sen, afar] = await Promise.all([
-        fetchLive('UCLA_DiR1FfKNvjuUpBHmylQ'), fetchLive('UCIBaDdAbGlFDeS-wVwVnlWQ'),
-        fetchLive('UCtI0Hodo5o5dUb67FeUjDeA'), fetchLive('UCNrGOnduIS9BXIRmDcHasZA'),
-        fetchLive('UCEWHPFNilbO98bnchOzB-4g'), fetchLive('UCaG0IHN1RMOZ4-U3wDXAkwA'),
-      ])
-      if (nasa) setNasaLiveId(nasa); if (esa) setEsaLiveId(esa); if (spacex) setSpacexLiveId(spacex)
-      if (worldcam) setWorldcamLiveId(worldcam); if (sen) setSenLiveId(sen); if (afar) setAfarLiveId(afar)
-      const allFailed = [nasa,esa,spacex,worldcam,sen,afar].every(v=>v===null)
-      try { sessionStorage.setItem(YT_CACHE_KEY, JSON.stringify({ data:{nasa,esa,spacex,worldcam,sen,afar}, ts:Date.now(), failed:allFailed })) } catch { /* ignore */ }
-    })()
-  }, [])
-
-  useEffect(() => {
     if (userPos && locationEnabledRef.current) {
       setUserPosition({ lat: userPos.lat, lon: userPos.lon, alt: userPos.alt ?? 0 })
       setTarget({ lat: userPos.lat, lon: userPos.lon })
@@ -458,15 +412,6 @@ export default function App() { // ⬅️ DEVENU APP()
     }
     return () => { delete (window as any).__onAlertSatClick }
   }, [conjunctionAlerts])
-
-  useEffect(() => {
-    const key = import.meta.env.VITE_YOUTUBE_API_KEY
-    if (!key) return
-    fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&channelId=UCLA_DiR1FfKNvjuUpBHmylQ&eventType=live&type=video&maxResults=1&key=${key}`)
-      .then(r => r.json())
-      .then((d: any) => { if (d.items?.[0]?.id?.videoId) setNasaLiveId(d.items[0].id.videoId) })
-      .catch(() => {})
-  }, [])
 
 const handleGoToPad = async (l: Launch) => {
     const p = l.pad ?? ''
