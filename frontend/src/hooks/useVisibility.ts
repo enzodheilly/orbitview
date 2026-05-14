@@ -71,7 +71,7 @@ export function useVisibility(thresholdDeg = 10) {
           Math.pow(pos.alt, 2)
         ) : 0
 
-        if (elevDeg > 0) {
+        if (elevDeg >= thresholdDeg) {
           results.push({
             norad: sat.norad,
             name: sat.name,
@@ -79,7 +79,7 @@ export function useVisibility(thresholdDeg = 10) {
             elevationDeg: Math.round(elevDeg * 10) / 10,
             azimuthDeg: Math.round(azDeg * 10) / 10,
             rangekm: Math.round(rangekm),
-            visible: elevDeg >= thresholdDeg,
+            visible: true,
           })
         }
       } catch { /* skip */ }

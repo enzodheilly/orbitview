@@ -6,13 +6,13 @@ import { CAT_COLOR } from '../types'
 import type { SatelliteDTO } from '../types'
 import * as satellite from 'satellite.js'
 
-const DAY_TEX_URL = 'https://cdn.jsdelivr.net/npm/three-globe/example/img/earth-blue-marble.jpg'
-const NIGHT_TEX_URL = 'https://cdn.jsdelivr.net/npm/three-globe/example/img/earth-night.jpg'
-const DAY_TEX_FALLBACK = 'https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg'
-const NIGHT_TEX_FALLBACK = 'https://unpkg.com/three-globe/example/img/earth-night.jpg'
+const DAY_TEX_URL = '/earth_day_8k.jpg'
+const NIGHT_TEX_URL = '/earth_night_8k.jpg'
+const DAY_TEX_FALLBACK = '/earth_day_4k.jpg'
+const NIGHT_TEX_FALLBACK = '/earth_night_4k.jpg'
 
 const earthVert=`varying vec3 vWorldNormal;varying vec2 vUv;void main(){vWorldNormal=normalize((modelMatrix*vec4(normal,0.0)).xyz);vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`
-const earthFrag=`uniform sampler2D dayTexture;uniform sampler2D nightTexture;uniform vec3 sunDirection;varying vec3 vWorldNormal;varying vec2 vUv;void main(){vec4 day=texture2D(dayTexture,vUv);vec4 night=texture2D(nightTexture,vUv);float d=dot(normalize(vWorldNormal),normalize(sunDirection));float b=smoothstep(-0.15,0.3,d);float t=smoothstep(-0.05,0.05,d);vec3 tc=mix(vec3(0.9,0.4,0.15),day.rgb,t);gl_FragColor=mix(vec4(night.rgb*2.0,1.0),vec4(tc,1.0),b);}`
+const earthFrag=`uniform sampler2D dayTexture;uniform sampler2D nightTexture;uniform vec3 sunDirection;varying vec3 vWorldNormal;varying vec2 vUv;void main(){vec4 day=texture2D(dayTexture,vUv);vec4 night=texture2D(nightTexture,vUv);float d=dot(normalize(vWorldNormal),normalize(sunDirection));float b=smoothstep(-0.2,0.1,d);float t=smoothstep(-0.08,0.08,d);vec3 dayBright=min(pow(day.rgb,vec3(0.82))*1.15,vec3(1.0));vec3 tc=mix(vec3(0.9,0.4,0.15),dayBright,t);gl_FragColor=mix(vec4(night.rgb*2.0,1.0),vec4(tc,1.0),b);}`
 
 function geoToVec3(lat:number,lon:number,altKm:number):THREE.Vector3{
   const r=1+altKm/6371,phi=(90-lat)*Math.PI/180,th=lon*Math.PI/180
@@ -59,20 +59,21 @@ function buildCoverageGroup(satPos:THREE.Vector3,lat:number,lon:number,altKm:num
   for(let i=0;i<=N;i++){const th=(i/N)*Math.PI*2;pts.push(sc.clone().multiplyScalar(Math.cos(angle)).add(t.clone().applyAxisAngle(sc,th).multiplyScalar(Math.sin(angle))).normalize().multiplyScalar(1.001))}
   for(let i=0;i<N;i++){const t1=(i/N)*Math.PI*2,t2=((i+1)/N)*Math.PI*2;const p1=sc.clone().multiplyScalar(Math.cos(angle)).add(t.clone().applyAxisAngle(sc,t1).multiplyScalar(Math.sin(angle))).normalize().multiplyScalar(1.001);const p2=sc.clone().multiplyScalar(Math.cos(angle)).add(t.clone().applyAxisAngle(sc,t2).multiplyScalar(Math.sin(angle))).normalize().multiplyScalar(1.001);dv.push(dc.x,dc.y,dc.z,p1.x,p1.y,p1.z,p2.x,p2.y,p2.z)}
   const dg=new THREE.BufferGeometry();dg.setAttribute('position',new THREE.Float32BufferAttribute(dv,3))
-  g.add(new THREE.Mesh(dg,new THREE.MeshBasicMaterial({color,transparent:true,opacity:0.08,side:THREE.DoubleSide,depthWrite:false})))
-  g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color,transparent:true,opacity:0.35})))
-  g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([satPos,sc.clone().normalize().multiplyScalar(1.001)]),new THREE.LineBasicMaterial({color,transparent:true,opacity:0.5})))
+  g.add(new THREE.Mesh(dg,new THREE.MeshBasicMaterial({color,transparent:true,opacity:0.18,side:THREE.DoubleSide,depthWrite:false})))
+  g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color,transparent:true,opacity:0.85})))
+  g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([satPos,sc.clone().normalize().multiplyScalar(1.001)]),new THREE.LineBasicMaterial({color,transparent:true,opacity:0.92})))
   return g
 }
 
 const CAT_RGB:Record<string,[number,number,number]>={
-  station:   [0.00,1.00,0.80],
+  station:   [0.00,1.00,1.00],
   gps:       [0.00,1.00,0.53],
-  weather:   [1.00,0.33,1.00],
+  weather:   [0.27,0.80,1.00],
   science:   [1.00,0.93,0.27],
   starlink:  [0.33,0.67,1.00],
-  telephonie:[1.00,0.53,1.00],
-  debris:    [1.00,0.20,0.00], // Ajout d'une couleur pour les débris traqués
+  internet:  [0.40,0.87,1.00],
+  telephonie:[1.00,0.60,0.27],
+  debris:    [1.00,0.27,0.00],
   unknown:   [1.00,1.00,1.00],
 }
 
@@ -94,9 +95,12 @@ const Globe = forwardRef<GlobeHandle, {
   satSize?:'small'|'medium'|'large';
   showAtmosphere?:boolean;
   showGrid?:boolean;
+  countryFilter?:string;
+  normCountry?:(c:string)=>string;
 }>(function Globe({
   preloadedSats,showDebrisCloud=false,reentryMode=false,reentryList=[],
-  autoRotate=true,liteMode=false,satSize='small',showAtmosphere=true,showGrid=true
+  autoRotate=true,liteMode=false,satSize='small',showAtmosphere=true,showGrid=true,
+  countryFilter='ALL',normCountry=(c)=>c
 }, ref){
   const canvasRef=useRef<HTMLCanvasElement>(null)
   const sceneRef=useRef<THREE.Scene|null>(null)
@@ -107,7 +111,7 @@ const Globe = forwardRef<GlobeHandle, {
 
   useImperativeHandle(ref, () => ({
     zoomIn:  () => { animTargetRef.current = { ...sphRef.current, r: Math.max(1.8, sphRef.current.r - 1.2) } },
-    zoomOut: () => { animTargetRef.current = { ...sphRef.current, r: Math.min(12,  sphRef.current.r + 1.2) } },
+    zoomOut: () => { animTargetRef.current = { ...sphRef.current, r: Math.min(500, sphRef.current.r + Math.max(1.2, sphRef.current.r * 0.2)) } },
     reset:   () => { animTargetRef.current = { theta: 0.4, phi: 1.2, r: 6.0 } },
   }))
   const earthUniformsRef=useRef<any>(null)
@@ -131,6 +135,10 @@ const Globe = forwardRef<GlobeHandle, {
 
   const catPointsRef=useRef<Map<string,CatPoints>>(new Map())
   const localPosRef=useRef<Record<string,{lat:number;lon:number;alt:number;vx:number;vy:number;vz:number}>>({})
+  const countryFilterRef=useRef(countryFilter)
+  const normCountryRef=useRef(normCountry)
+  useEffect(()=>{ countryFilterRef.current=countryFilter },[countryFilter])
+  useEffect(()=>{ normCountryRef.current=normCountry },[normCountry])
 
   const{satellites,activeFilters,selectedNorad,selectSat,updatePosition,target,conjunctionPair,userPosition,visibleNorads,alertMode,alertNoradColors}=useSatStore()
 
@@ -196,13 +204,16 @@ const Globe = forwardRef<GlobeHandle, {
     updateCamera()
     const onMove=(e:MouseEvent)=>{isDrag=true;const dx=(e.clientX-lastX)*0.005,dy=(e.clientY-lastY)*0.005;sphRef.current.theta-=dx;sphRef.current.phi=Math.max(0.1,Math.min(Math.PI-0.1,sphRef.current.phi-dy));lastX=e.clientX;lastY=e.clientY;updateCamera()}
     const onUp=(e:MouseEvent)=>{
+      const wasDrag=isDrag;isDrag=false
       canvas.removeEventListener('mousemove',onMove);canvas.removeEventListener('mouseup',onUp)
-      if(!isDrag){
+      if(!wasDrag){
         const rect=canvas.getBoundingClientRect(),mx=((e.clientX-rect.left)/rect.width)*2-1,my=-((e.clientY-rect.top)/rect.height)*2+1
+        const r=sphRef.current.r
+        const dynThreshold=Math.max(0.02, r*0.008)
         const ray=new THREE.Raycaster();ray.setFromCamera(new THREE.Vector2(mx,my),camera)
-        if(debrisCloudRef.current?.visible){ray.params.Points={threshold:0.02};const hits=ray.intersectObject(debrisCloudRef.current);if(hits.length>0){const idx=hits[0].index??-1;const items=debrisCloudRef.current.userData.items;if(idx>=0&&items?.[idx]){;(window as any).__onDebrisClick?.(items[idx]);return}}}
-        if(alertPointsRef.current?.visible){ray.params.Points={threshold:0.03};const hits=ray.intersectObject(alertPointsRef.current);if(hits.length>0){const idx=hits[0].index??-1;const sats=alertPointsRef.current.userData.alertSats;if(idx>=0&&sats?.[idx]){;(window as any).__onAlertSatClick?.(sats[idx].norad);return}}}
-        ray.params.Points={threshold:0.015}
+        if(debrisCloudRef.current?.visible){ray.params.Points={threshold:dynThreshold};const hits=ray.intersectObject(debrisCloudRef.current);if(hits.length>0){const idx=hits[0].index??-1;const items=debrisCloudRef.current.userData.items;if(idx>=0&&items?.[idx]){;(window as any).__onDebrisClick?.(items[idx]);return}}}
+        if(alertPointsRef.current?.visible){ray.params.Points={threshold:dynThreshold};const hits=ray.intersectObject(alertPointsRef.current);if(hits.length>0){const idx=hits[0].index??-1;const sats=alertPointsRef.current.userData.alertSats;if(idx>=0&&sats?.[idx]){;(window as any).__onAlertSatClick?.(sats[idx].norad);return}}}
+        ray.params.Points={threshold:dynThreshold}
         for(const[,cp] of catPointsRef.current){
           if(!cp.points.visible)continue
           const hits=ray.intersectObject(cp.points)
@@ -211,7 +222,7 @@ const Globe = forwardRef<GlobeHandle, {
       }
     }
     canvas.addEventListener('mousedown',e=>{isDrag=false;lastX=e.clientX;lastY=e.clientY;canvas.addEventListener('mousemove',onMove);canvas.addEventListener('mouseup',onUp)})
-    canvas.addEventListener('wheel',e=>{sphRef.current.r=Math.max(1.3,Math.min(30,sphRef.current.r+e.deltaY*0.005));updateCamera()})
+    canvas.addEventListener('wheel',e=>{const step=e.deltaY*sphRef.current.r*0.001;sphRef.current.r=Math.max(1.3,Math.min(500,sphRef.current.r+step));updateCamera()})
     const ro=new ResizeObserver(()=>{renderer.setSize(canvas.clientWidth,canvas.clientHeight);camera.aspect=canvas.clientWidth/canvas.clientHeight;camera.updateProjectionMatrix()})
     ro.observe(canvas)
 
@@ -275,12 +286,20 @@ const Globe = forwardRef<GlobeHandle, {
       const rgb=CAT_RGB[cat]??[1,1,1]
 
       catSats.forEach((sat:any,i)=>{
-        if(sat._pos){
+        const satCountry = normCountry(sat.country || sat.countryCode || '')
+        // débris : filtre strict (sans pays connu = exclu quand filtre actif)
+        // autres cats : sans pays = toujours visible (CelesTrak ne fournit pas de country)
+        const matchesCountry = countryFilter === 'ALL' || (
+          cat === 'debris'
+            ? satCountry === normCountry(countryFilter)
+            : !satCountry || satCountry === normCountry(countryFilter)
+        )
+        if(sat._pos && matchesCountry){
           const v=geoToVec3(sat._pos.lat,sat._pos.lon,sat._pos.alt)
           posArr[i*3]=v.x;posArr[i*3+1]=v.y;posArr[i*3+2]=v.z
           localPosRef.current[sat.norad]=sat._pos
         } else {
-          // No TLE propagation result — park far off-scene so it's invisible
+          // No TLE / filtered out — park far off-scene so it's invisible
           posArr[i*3]=1e4;posArr[i*3+1]=0;posArr[i*3+2]=0
         }
         colArr[i*3]=rgb[0];colArr[i*3+1]=rgb[1];colArr[i*3+2]=rgb[2]
@@ -300,7 +319,7 @@ const Globe = forwardRef<GlobeHandle, {
       scene.add(points)
       catPointsRef.current.set(cat,{points,sats:catSats,posArr,geo})
     })
-  },[preloadedSats,satellites, reentryMode])
+  },[preloadedSats,satellites,reentryMode,countryFilter])
 
   useEffect(()=>{
     const sats=preloadedSats&&preloadedSats.length>0?preloadedSats:satellites
@@ -319,12 +338,25 @@ const Globe = forwardRef<GlobeHandle, {
       const results=e.data
       if(!results||!Object.keys(results).length)return
 
-      catPointsRef.current.forEach(cp=>{
+      const cf=countryFilterRef.current
+      const nc=normCountryRef.current
+
+      catPointsRef.current.forEach((cp,cat)=>{
         let changed=false
-        cp.sats.forEach((sat,i)=>{
+        cp.sats.forEach((sat:any,i)=>{
           const pos=results[sat.norad];if(!pos)return
-          const v=geoToVec3(pos.lat,pos.lon,pos.alt)
-          cp.posArr[i*3]=v.x;cp.posArr[i*3+1]=v.y;cp.posArr[i*3+2]=v.z
+          const satCountry=nc(sat.country||sat.countryCode||'')
+          const matchesCountry = cf==='ALL' || (
+            cat==='debris'
+              ? satCountry===nc(cf)
+              : !satCountry || satCountry===nc(cf)
+          )
+          if(matchesCountry){
+            const v=geoToVec3(pos.lat,pos.lon,pos.alt)
+            cp.posArr[i*3]=v.x;cp.posArr[i*3+1]=v.y;cp.posArr[i*3+2]=v.z
+          } else {
+            cp.posArr[i*3]=1e4;cp.posArr[i*3+1]=0;cp.posArr[i*3+2]=0
+          }
           localPosRef.current[sat.norad]=pos
           changed=true
         })
@@ -358,10 +390,10 @@ const Globe = forwardRef<GlobeHandle, {
       const rec=satellite.twoline2satrec(sat.tle.line1,sat.tle.line2),period=(2*Math.PI/rec.no)*60000
       const pts:THREE.Vector3[]=[],N=180
       for(let i=0;i<=N;i++){const d=new Date(now.getTime()+(i/N)*period);const pv=satellite.propagate(rec,d);if(!pv.position||typeof pv.position==='boolean')continue;const gmst=satellite.gstime(d),gd=satellite.eciToGeodetic(pv.position as any,gmst);pts.push(geoToVec3(satellite.degreesLat(gd.latitude),satellite.degreesLong(gd.longitude),gd.height))}
-      if(pts.length>1){orbitLineRef.current=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:new THREE.Color(CAT_COLOR[sat.category]??(sat.category==='debris'?'#ff4400':'#fff')),transparent:true,opacity:0.6}));scene.add(orbitLineRef.current)}
+      if(pts.length>1){orbitLineRef.current=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:new THREE.Color(CAT_COLOR[sat.category]??(sat.category==='debris'?'#ff4400':'#fff')),transparent:true,opacity:0.9}));scene.add(orbitLineRef.current)}
     }catch{ /* skip invalid TLE */ }
     const pos=propagate(sat.tle,now)
-    if(pos){const col=new THREE.Color(CAT_COLOR[sat.category]??(sat.category==='debris'?'#ff4400':'#fff'));coverageRef.current=buildCoverageGroup(geoToVec3(pos.lat,pos.lon,pos.alt),pos.lat,pos.lon,pos.alt,col);scene.add(coverageRef.current);animTargetRef.current={phi:(90-pos.lat)*Math.PI/180,theta:(pos.lon)*Math.PI/180+Math.PI/2,r:2.2}}
+    if(pos){const col=new THREE.Color(CAT_COLOR[sat.category]??(sat.category==='debris'?'#ff4400':'#fff'));coverageRef.current=buildCoverageGroup(geoToVec3(pos.lat,pos.lon,pos.alt),pos.lat,pos.lon,pos.alt,col);scene.add(coverageRef.current);const orbitR=(6371+pos.alt)/6371;const camR=Math.max(2.2,orbitR*2.6);animTargetRef.current={phi:(90-pos.lat)*Math.PI/180,theta:(pos.lon)*Math.PI/180+Math.PI/2,r:camR}}
   },[selectedNorad])
 
   useEffect(()=>{
@@ -379,7 +411,7 @@ const Globe = forwardRef<GlobeHandle, {
     const sphere=new THREE.Mesh(new THREE.SphereGeometry(vA.distanceTo(vB)/2,16,16),new THREE.MeshBasicMaterial({color:0xff3355,transparent:true,opacity:0.08,wireframe:true}))
     sphere.position.copy(mid);g.add(sphere)
     const midLat=Math.asin(mid.y/mid.length())*180/Math.PI,midLon=Math.atan2(-mid.z,mid.x)*180/Math.PI
-    animTargetRef.current={phi:(90-midLat)*Math.PI/180,theta:midLon*Math.PI/180,r:Math.max(1.5,vA.distanceTo(vB)*8)}
+    animTargetRef.current={phi:(90-midLat)*Math.PI/180,theta:midLon*Math.PI/180+Math.PI/2,r:Math.max(1.5,vA.distanceTo(vB)*8)}
     scene.add(g);conjVizRef.current=g
   },[conjunctionPair])
 
@@ -392,7 +424,7 @@ const Globe = forwardRef<GlobeHandle, {
     const ctx=c2.getContext('2d')!;ctx.strokeStyle='#ff4444';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(32,16);ctx.lineTo(32,48);ctx.stroke();ctx.beginPath();ctx.moveTo(16,32);ctx.lineTo(48,32);ctx.stroke()
     const sprite=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(c2),transparent:true,depthWrite:false}))
     sprite.position.copy(v);sprite.scale.set(0.06,0.06,1);scene.add(sprite);padMarkerRef.current=sprite
-    animTargetRef.current={phi:(90-target.lat)*Math.PI/180,theta:target.lon*Math.PI/180,r:1.8}
+    animTargetRef.current={phi:(90-target.lat)*Math.PI/180,theta:target.lon*Math.PI/180+Math.PI/2,r:1.8}
   },[target])
 
   useEffect(()=>{
@@ -429,8 +461,8 @@ const Globe = forwardRef<GlobeHandle, {
       const rec=satellite.twoline2satrec(t1,t2),now=Date.now(),period=(2*Math.PI/rec.no)*60000
       const duration=Math.min(period*1.5,5400000),step=60000
       const g=new THREE.Group();let pts:THREE.Vector3[]=[],prevLon:number|null=null
-      for(let t=0;t<=duration;t+=step){const d=new Date(now+t),pv=satellite.propagate(rec,d);if(!pv.position||typeof pv.position==='boolean')continue;const gmst=satellite.gstime(d),gd=satellite.eciToGeodetic(pv.position as any,gmst);const lat=satellite.degreesLat(gd.latitude),lon=satellite.degreesLong(gd.longitude);if(prevLon!==null&&Math.abs(lon-prevLon)>180){if(pts.length>1)g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([...pts]),new THREE.LineBasicMaterial({color:0x00e5ff,transparent:true,opacity:0.5})));pts=[]}pts.push(geoToVec3(lat,lon,gd.height).normalize().multiplyScalar(1.003));prevLon=lon}
-      if(pts.length>1)g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([...pts]),new THREE.LineBasicMaterial({color:0x00e5ff,transparent:true,opacity:0.5})))
+      for(let t=0;t<=duration;t+=step){const d=new Date(now+t),pv=satellite.propagate(rec,d);if(!pv.position||typeof pv.position==='boolean')continue;const gmst=satellite.gstime(d),gd=satellite.eciToGeodetic(pv.position as any,gmst);const lat=satellite.degreesLat(gd.latitude),lon=satellite.degreesLong(gd.longitude);if(prevLon!==null&&Math.abs(lon-prevLon)>180){if(pts.length>1)g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([...pts]),new THREE.LineBasicMaterial({color:0x00e5ff,transparent:true,opacity:0.85})));pts=[]}pts.push(geoToVec3(lat,lon,gd.height).normalize().multiplyScalar(1.003));prevLon=lon}
+      if(pts.length>1)g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([...pts]),new THREE.LineBasicMaterial({color:0x00e5ff,transparent:true,opacity:0.85})))
       scene.add(g);groundTrackRef.current=g
     }catch{ /* skip invalid TLE */ }
   },[selectedNorad])

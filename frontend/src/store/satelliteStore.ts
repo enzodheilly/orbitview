@@ -31,7 +31,7 @@ interface SatState {
   setAlertNoradColors: (colors: Record<string, string>) => void
 }
 
-const ALL_CATS: SatCategory[] = ['station', 'gps', 'weather', 'science', 'telephonie', 'starlink']
+const ALL_CATS: SatCategory[] = ['station', 'gps', 'weather', 'science', 'telephonie', 'starlink', 'internet', 'debris']
 const FILTERS_KEY = 'sm_active_filters'
 
 function loadFilters(): Set<SatCategory> {

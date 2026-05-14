@@ -14,7 +14,7 @@ const CATEGORY_IMAGE: Record<string, string> = {
 }
 
 // Images par nom de constellation (priorité sur la catégorie)
-const NAME_IMAGE: { match: string; src: string }[] = [
+const NAME_IMAGE: { match: string | RegExp; src: string }[] = [
   { match: 'oneweb',    src: '/satellites/images/oneweb.jpg' },
   { match: 'hjs',       src: '/satellites/images/hjs.jpg' },
   { match: 'hulianwang', src: '/satellites/images/hulianwang.jpg' },
@@ -122,12 +122,64 @@ const NAME_IMAGE: { match: string; src: string }[] = [
 { match: 'mengtian', src: '/satellites/images/css.jpg' },
 { match: 'tianhe', src: '/satellites/images/css.jpg' },
 { match: 'poisk', src: '/satellites/images/poisk.jpg' },
-{ match: 'glonass', src: '/satellites/images/glonass.jpg' },
-{ match: 'navstar', src: '/satellites/images/navstar.jpg' },
-{ match: 'gps', src: '/satellites/images/gps.jpg' },
-{ match: 'beidou', src: '/satellites/images/beidou.jpg' },
-{ match: 'galileo', src: '/satellites/images/galileo.jpg' },
-{ match: 'fengyun', src: '/satellites/images/fengyun.jpg' },
+// GLONASS series (specific before generic)
+{ match: 'glonass-k2',              src: '' },
+{ match: /glonass-k\b/i,            src: '' },
+{ match: /glonass-m\b/i,            src: '/satellites/images/glonass.jpg' },
+{ match: 'glonass',                 src: '/satellites/images/glonass.jpg' },
+
+// GPS series (specific before generic)
+{ match: /gps iiif/i,               src: '' },
+{ match: /gps iii/i,                src: '' },
+{ match: /gps biif/i,               src: '' },
+{ match: /gps biirm/i,              src: '' },
+{ match: /gps biir/i,               src: '' },
+{ match: /gps block ii\b/i,         src: '' },
+{ match: 'navstar',                 src: '/satellites/images/navstar.jpg' },
+{ match: 'gps',                     src: '/satellites/images/gps.jpg' },
+
+// QZSS / NAVIC
+{ match: /qzs-?\d/i,                src: '' },
+{ match: 'michibiki',               src: '' },
+{ match: 'irnss',                   src: '' },
+{ match: 'navic',                   src: '' },
+
+// SBAS
+{ match: 'waas',                    src: '' },
+{ match: 'egnos',                   src: '' },
+{ match: 'msas',                    src: '' },
+{ match: 'gagan',                   src: '' },
+
+// Beidou series (BDS-3 before generic BDS-2)
+{ match: 'beidou-3',                src: '' },
+{ match: 'beidou 3',                src: '' },
+{ match: 'beidou',                  src: '/satellites/images/beidou.jpg' },
+
+// Galileo (IOV before generic)
+{ match: /galileo.?(pfm|fm[234])/i, src: '' },
+{ match: /gsat01\d{2}/i,            src: '' },
+{ match: /galileo.?foc/i,           src: '' },
+{ match: 'galileo',                 src: '/satellites/images/galileo.jpg' },
+// Fengyun series (specific before generic)
+{ match: /fy-?4|fengyun.?4/i,       src: '' },
+{ match: /fy-?3|fengyun.?3/i,       src: '' },
+{ match: /fy-?2|fengyun.?2/i,       src: '' },
+{ match: /fy-?1|fengyun.?1/i,       src: '' },
+{ match: 'fengyun',                 src: '/satellites/images/fengyun.jpg' },
+
+// European / Russian / Asian weather
+{ match: /meteosat \d{2}/i,         src: '' },  // MSG/MTG generation
+{ match: /meteosat-\d{2}/i,         src: '' },
+{ match: 'meteosat',                src: '' },
+{ match: 'elektro-l',               src: '' },
+{ match: 'arktika-m',               src: '' },
+{ match: /insat-\d|kalpana/i,       src: '' },
+{ match: /gsat-\d+(r|bc)?/i,        src: '' },
+{ match: /gms-\d/i,                 src: '' },
+{ match: 'coms',                    src: '' },   // Korean Chollian/COMS
+{ match: 'chollian',                src: '' },
+{ match: 'geo-kompsat',             src: '' },
+{ match: 'himawari',                src: '' },   // fallback (specific already above)
 { match: 'sentinel-6b', src: '/satellites/images/sentinel-6b.jpg' },
 { match: 'sentinel 1a', src: '/satellites/images/sentinel-1a.jpg' },
 { match: 'sentinel 1b', src: '/satellites/images/sentinel-1a.jpg' },
@@ -215,14 +267,117 @@ const NAME_IMAGE: { match: string; src: string }[] = [
 { match: 'dove pioneer', src: '/satellites/images/dove3.jpg' },
 { match: 'flock', src: '/satellites/images/flock.jpg' },
 { match: 'skysat', src: '/satellites/images/skysat.jpg' },
+{ match: 'globalstar', src: '/satellites/images/globalstar.jpg' },
+{ match: 'intelsat 6b', src: '/satellites/images/intelsat6b.jpg' },
+{ match: /intelsat 1\d{3}/, src: '/satellites/images/intelsat1000.jpg' }, // 1000+
+{ match: /intelsat 9\d{2}/, src: '/satellites/images/intelsat900.jpg' },  // 900s
+{ match: /intelsat 8\d{2}/, src: '/satellites/images/intelsat800.jpg' },  // 800s
+{ match: /intelsat 7\d{2}/, src: '/satellites/images/intelsat700.jpg' },  // 700s
+{ match: /intelsat 6\d{2}/, src: '/satellites/images/intelsat600.jpg' },  // 600s
+{ match: /intelsat 5\d{2}/, src: '/satellites/images/intelsat500.jpg' },  // 500s
+{ match: 'intelsat 4', src: '/satellites/images/intelsat4.jpg' },
+{ match: 'intelsat 39', src: '/satellites/images/intelsat39.jpg' },
+{ match: 'intelsat 37e', src: '/satellites/images/intelsat37e.jpg' },
+{ match: 'intelsat 35e', src: '/satellites/images/intelsat35e.jpg' },
+{ match: 'intelsat 32e', src: '/satellites/images/intelsat32e.jpg' },
+{ match: 'intelsat 33e', src: '/satellites/images/intelsat33e.jpg' },
+{ match: 'intelsat 36', src: '/satellites/images/intelsat36.jpg' },
+{ match: 'intelsat 30', src: '/satellites/images/intelsat30.jpg' },
+{ match: 'intelsat 31', src: '/satellites/images/intelsat30.jpg' },
+{ match: 'intelsat 34', src: '/satellites/images/intelsat34.jpg' },
+{ match: 'intelsat 3-f', src: '/satellites/images/intelsat3-f.jpg' },
+{ match: 'o3b mpower', src: '/satellites/images/o3b_mpower.jpg' },
+{ match: 'o3bf', src: '/satellites/images/o3b_mpower.jpg' },
+{ match: 'o3b fm', src: '/satellites/images/o3b_f.jpg' },
+{ match: 'o3b pfm', src: '/satellites/images/o3b_f.jpg' },
 
+{ match: /iridium \d{3}/, src: '/satellites/images/iridium_next.jpg' }, // 100-181
+{ match: /iridium \d{1,2}$/, src: '/satellites/images/iridium_old.jpg' }, // 1-99
+{ match: 'iridium', src: '/satellites/images/iridium_old.jpg' }, // fallback
 
+{ match: 'kuiper', src: '/satellites/images/kuiper.jpg' },
+
+{ match: 'intelsat 2', src: '/satellites/images/intelsat2.jpg' },
+{ match: 'intelsat 3r', src: '/satellites/images/intelsat2.jpg' },
+{ match: 'intelsat 7', src: '/satellites/images/intelsat7.jpg' },
+{ match: 'intelsat 8', src: '/satellites/images/intelsat8.jpg' },
+{ match: 'intelsat 10', src: '/satellites/images/intelsat10.jpg' },
+{ match: 'intelsat 9', src: '/satellites/images/intelsat10.jpg' },
+{ match: 'intelsat 1r', src: '/satellites/images/intelsat1r.jpg' },
+{ match: 'intelsat 5', src: '/satellites/images/intelsat5.jpg' },
+
+{ match: 'protostar 1', src: '/satellites/images/protostar1.jpg' },
+
+// SAR / Earth Observation constellations
+{ match: 'iceye',                   src: '' },
+{ match: 'capella',                 src: '' },
+{ match: /hawk\b/i,                 src: '' },   // HawkEye 360 RF monitoring
+{ match: 'umbra',                   src: '' },
+{ match: 'sar-lupe',                src: '' },
+{ match: 'cosmo-skymed',            src: '' },
+{ match: 'kompsat',                 src: '' },   // Korean EO
+{ match: 'alos',                    src: '' },   // JAXA ALOS
+{ match: 'seosat',                  src: '' },
+{ match: 'prisma',                  src: '' },   // Italian hyperspectral
+{ match: 'iride',                   src: '' },   // Italian constellation
+{ match: 'nusat',                   src: '' },
+{ match: 'pelican',                 src: '' },   // Planet Labs Pelican
+
+// Space-Domain Awareness / Military
+{ match: /sda t\d/i,                src: '' },   // SDA Tranche
+{ match: 'praetorian',              src: '' },
+{ match: 'sbirs',                   src: '' },
+{ match: 'gssap',                   src: '' },
+{ match: 'starlion',                src: '' },
+
+// Commercial broadband / IoT
+{ match: 'bluebird',                src: '' },   // AST SpaceMobile
+{ match: /ast (fm|bluebird)/i,      src: '' },
+{ match: 'aether',                  src: '' },
+{ match: 'disksat',                 src: '' },
+{ match: 'rassvet',                 src: '' },
+
+// GEO communications
+{ match: /ses-\d/i,                 src: '' },
+{ match: /ses \d/i,                 src: '' },
+{ match: /eutelsat \d/i,            src: '' },
+{ match: 'hot bird',                src: '' },
+{ match: /arabsat-\d/i,             src: '' },
+{ match: /astra \d[a-z]/i,          src: '' },
+{ match: /turksat \d/i,             src: '' },
+{ match: /badr-\d/i,                src: '' },
+{ match: /horizons \d/i,            src: '' },
+{ match: /directv \d/i,             src: '' },
+{ match: /echostar \d/i,            src: '' },
+{ match: /galaxy \d/i,              src: '' },   // Intelsat Galaxy series
+{ match: /loral \d/i,               src: '' },
+{ match: /nimiq \d/i,               src: '' },
+{ match: /telestar \d/i,            src: '' },
+{ match: /optus \w/i,               src: '' },
+{ match: /measat-\d/i,              src: '' },
+{ match: /apstar-\d/i,              src: '' },
+{ match: /asiasat \d/i,             src: '' },
+{ match: /jcsat-\d/i,               src: '' },
+{ match: /superbird-/i,             src: '' },
+{ match: /koreasat \d/i,            src: '' },
+
+// Russian Cosmos military/dual-use
+{ match: /cosmos 2\d{3}/i,          src: '' },
+
+// Debris category images
+{ match: 'fengyun 1c deb',          src: '' },
+{ match: 'iridium 33 deb',          src: '' },
+{ match: 'cosmos 2251 deb',         src: '' },
 ]
 
 function getImage(name: string, category: string): string | null {
   const n = name.toLowerCase()
   for (const entry of NAME_IMAGE) {
-    if (n.includes(entry.match)) return entry.src
+    if (typeof entry.match === 'string') {
+      if (n.includes(entry.match)) return entry.src
+    } else {
+      if (entry.match.test(n)) return entry.src
+    }
   }
   return CATEGORY_IMAGE[category] ?? null
 }

@@ -8,7 +8,7 @@ import SatelliteImage from './components/SatelliteImage'
 import SpaceDashboard from './components/SpaceDashboard'
 import { useSatStore } from './store/satelliteStore'
 import { useSettings, T, TIMEZONES } from './store/settingsStore'
-import { CAT_COLOR, CAT_LABEL, type SatCategory } from './types'
+import { CAT_COLOR, CAT_LABEL, CAT_PARENT, type SatCategory } from './types'
 import { getUpcomingLaunches } from "./api/launch"
 import type { Launch } from "./types/launch"
 import ApodPanel from './components/panels/ApodPanel'
@@ -16,6 +16,7 @@ import NeoPanel from './components/panels/NeoPanel'
 import JwstPanel from './components/panels/JwstPanel'
 import MoonPanel from './components/panels/MoonPanel'
 import SolarFlaresPanel from './components/panels/SolarFlaresPanel'
+import DeepSpacePanel from './components/panels/DeepSpacePanel'
 
 // 🔍 Détection de l'activité du satellite
 function isSatelliteActive(sat: any) {
@@ -27,7 +28,7 @@ function isSatelliteActive(sat: any) {
   return true;
 }
 
-const ALL_CATS: SatCategory[] = ['station', 'gps', 'weather', 'science', 'starlink', 'telephonie']
+const ALL_CATS: SatCategory[] = ['station', 'gps', 'weather', 'science', 'starlink', 'internet', 'telephonie', 'debris']
 const LAUNCH_PAD_COORDS: Record<string, { lat: number, lon: number }> = {
   "space launch complex 40": { lat: 28.56, lon: -80.57 }, "space launch complex 4": { lat: 34.63, lon: -120.61 },
   "space launch complex 41": { lat: 28.58, lon: -80.58 }, "orbital launch pad": { lat: 25.99, lon: -97.15 },
@@ -81,7 +82,7 @@ function Countdown({ date }: { date: string }) {
 const glass = { background: 'rgba(4,8,20,0.82)', backdropFilter: 'blur(24px)', border: '1px solid rgba(0,229,255,0.12)', boxShadow: '0 8px 40px rgba(0,0,0,0.6)' }
 
 
-type Panel = 'satellites' | 'missions' | 'alerts' | 'position' | 'weather' | 'crew' | 'news' | 'reentry' | 'history' | 'apod' | 'neo' | 'jwst' | 'moon' | 'solarflares' | null
+type Panel = 'satellites' | 'missions' | 'alerts' | 'position' | 'weather' | 'crew' | 'news' | 'reentry' | 'history' | 'apod' | 'neo' | 'jwst' | 'moon' | 'solarflares' | 'deepspace' | null
 
 export default function App() { // ⬅️ DEVENU APP()
   const { satellites, positions, selectedNorad, activeFilters, selectSat, toggleFilter, setTarget, setConjunctionPair, setUserPosition, setVisibleNorads, setAlertMode, setAlertNoradColors } = useSatStore()
@@ -89,6 +90,8 @@ export default function App() { // ⬅️ DEVENU APP()
   const t = T[language]
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
+  const [searchModalOpen, setSearchModalOpen] = useState(false)
+  const [searchModalQuery, setSearchModalQuery] = useState('')
   const [satCollapsed, setSatCollapsed] = useState(() => {
     try { return localStorage.getItem('sm_sat_collapsed') === 'true' } catch { return false }
   })
@@ -183,7 +186,10 @@ export default function App() { // ⬅️ DEVENU APP()
         }
         return NORM[(c||'').toUpperCase().trim()] ?? (c||'').toUpperCase().trim()
       }
-      return norm(s.country || s.countryCode || '') === countryFilter
+      const code = norm(s.country || s.countryCode || '')
+      return s.category === 'debris'
+        ? code === countryFilter
+        : !code || code === countryFilter
     })
     if (!stillValid) setCountryFilter('ALL')
   }, [activeFilters])
@@ -192,8 +198,10 @@ export default function App() { // ⬅️ DEVENU APP()
     if (_satFetchStarted.current) return
     _satFetchStarted.current = true
 
-    const CACHE_KEY = 'spacemonitor_sats_v3'
+    // v9: empty-country satellites always pass country filter
+    const CACHE_KEY = 'spacemonitor_sats_v9'
     const CACHE_TTL = 4 * 3600 * 1000
+    const NON_DEBRIS_CATS = ['starlink', 'internet', 'science', 'weather', 'telephonie', 'gps', 'station']
 
     const propagateAndApply = (sats: any[]): Promise<any[]> =>
       new Promise(resolve => {
@@ -204,47 +212,69 @@ export default function App() { // ⬅️ DEVENU APP()
       })
 
     ;(async () => {
+      // Step 1: non-debris categories — try localStorage first
+      let nonDebrisSats: any[] = []
       try {
         const raw = localStorage.getItem(CACHE_KEY)
         if (raw) {
           const { data, ts } = JSON.parse(raw)
-          if (Date.now() - ts < CACHE_TTL && Array.isArray(data) && data.length > 10) { useSatStore.setState({ satellites: data }); return }
+          if (Date.now() - ts < CACHE_TTL && Array.isArray(data) && data.length > 10) {
+            nonDebrisSats = data
+            useSatStore.setState({ satellites: nonDebrisSats })
+          }
         }
       } catch { /* stale */ }
 
-      const cats = ['starlink', 'science', 'weather', 'telephonie', 'gps', 'station']
-      const firstPages = await Promise.all(cats.map(async cat => {
-        try {
-          const res = await fetch(`/api/satellites/category/${cat}?limit=500&offset=0`)
-          const json = await res.json()
-          const batch = (json.data || []) as any[]
-          return { cat, batch, hasMore: batch.length >= 500 }
-        } catch { return { cat, batch: [] as any[], hasMore: false } }
-      }))
-
-      const firstBatch = firstPages.flatMap(p => p.batch)
-      if (firstBatch.length > 0) { await propagateAndApply(firstBatch); useSatStore.setState({ satellites: [...firstBatch] }) }
-
-      const extraBatches = await Promise.all(firstPages.filter(p => p.hasMore).map(async ({ cat, batch: first }) => {
-        const all = [...first]; let offset = 500
-        while (true) {
+      if (nonDebrisSats.length === 0) {
+        const firstPages = await Promise.all(NON_DEBRIS_CATS.map(async cat => {
           try {
-            const res = await fetch(`/api/satellites/category/${cat}?limit=500&offset=${offset}`)
-            const json = await res.json(); const page: any[] = json.data || []
-            if (!page.length) break; all.push(...page); if (page.length < 500) break; offset += 500
-          } catch { break }
-        }
-        return all.slice(first.length)
-      }))
+            const res = await fetch(`/api/satellites/category/${cat}?limit=500&offset=0`)
+            const json = await res.json()
+            const batch = (json.data || []) as any[]
+            return { cat, batch, hasMore: batch.length >= 500 }
+          } catch { return { cat, batch: [] as any[], hasMore: false } }
+        }))
 
-      const extraSats = extraBatches.flat()
-      if (extraSats.length > 0) {
-        await propagateAndApply(extraSats)
-        const allSats = [...firstBatch, ...extraSats]
-        useSatStore.setState({ satellites: allSats })
-        try { localStorage.setItem(CACHE_KEY, JSON.stringify({ data: allSats, ts: Date.now() })) } catch { /* quota */ }
-      } else if (firstBatch.length > 0) {
-        try { localStorage.setItem(CACHE_KEY, JSON.stringify({ data: firstBatch, ts: Date.now() })) } catch { /* quota */ }
+        const firstBatch = firstPages.flatMap(p => p.batch)
+        if (firstBatch.length > 0) { await propagateAndApply(firstBatch); useSatStore.setState({ satellites: [...firstBatch] }) }
+
+        const extraBatches = await Promise.all(firstPages.filter(p => p.hasMore).map(async ({ cat, batch: first }) => {
+          const all = [...first]; let offset = 500
+          while (true) {
+            try {
+              const res = await fetch(`/api/satellites/category/${cat}?limit=500&offset=${offset}`)
+              const json = await res.json(); const page: any[] = json.data || []
+              if (!page.length) break; all.push(...page); if (page.length < 500) break; offset += 500
+            } catch { break }
+          }
+          return all.slice(first.length)
+        }))
+
+        const extraSats = extraBatches.flat()
+        if (extraSats.length > 0) { await propagateAndApply(extraSats) }
+        nonDebrisSats = [...firstBatch, ...extraSats]
+        useSatStore.setState({ satellites: [...nonDebrisSats] })
+        try { localStorage.setItem(CACHE_KEY, JSON.stringify({ data: nonDebrisSats, ts: Date.now() })) } catch { /* quota */ }
+      }
+
+      // Step 2: debris always fetched fresh (too large for localStorage)
+      // Use limit=2000 to reduce pages from ~31 to ~8
+      const allDebris: any[] = []
+      let debrisOffset = 0
+      while (true) {
+        try {
+          const res = await fetch(`/api/satellites/category/debris?limit=2000&offset=${debrisOffset}`)
+          const json = await res.json()
+          const page: any[] = json.data || []
+          if (!page.length) break
+          allDebris.push(...page)
+          if (page.length < 2000) break
+          debrisOffset += 2000
+        } catch { break }
+      }
+      if (allDebris.length > 0) {
+        await propagateAndApply(allDebris)
+        useSatStore.setState({ satellites: [...nonDebrisSats, ...allDebris] })
       }
     })()
   }, [])
@@ -324,9 +354,7 @@ export default function App() { // ⬅️ DEVENU APP()
         else { throw new Error('expired') }
       } else { throw new Error('no cache') }
     } catch {
-      const startDate = new Date(Date.now() - 30 * 24 * 3600000).toISOString().split('T')[0]
-      const endDate = new Date().toISOString().split('T')[0]
-      fetch(`https://api.nasa.gov/DONKI/FLR?startDate=${startDate}&endDate=${endDate}&api_key=DEMO_KEY`)
+      fetch('/api/nasa/flares')
         .then(r => r.json())
         .then(d => {
           const arr = Array.isArray(d) ? d : []
@@ -682,7 +710,11 @@ const handleTrackReentry = (d: any) => {
     const matchesCat = activeFilters.has(s.category);
     const matchesSearch = s.name.toLowerCase().includes(searchQuery.toLowerCase()) || s.norad.includes(searchQuery);
     const satCode = normCountry(s.country || s.countryCode || '')
-    const matchesCountry = countryFilter === 'ALL' || satCode === normCountry(countryFilter);
+    const matchesCountry = countryFilter === 'ALL' || (
+      s.category === 'debris'
+        ? satCode === normCountry(countryFilter)
+        : !satCode || satCode === normCountry(countryFilter)
+    );
     return matchesCat && matchesSearch && matchesCountry;
   });
 
@@ -707,13 +739,13 @@ const handleTrackReentry = (d: any) => {
   const th = {
     spaceBg:       '#01030a',
     navBg:         darkMode ? 'rgba(4,8,22,0.96)'    : 'rgba(255,255,255,0.97)',
-    navBorder:     darkMode ? 'rgba(0,229,255,0.08)'  : 'rgba(0,0,0,0.08)',
-    infoBg:        darkMode ? 'rgba(2,5,16,0.92)'     : 'rgba(235,242,255,0.97)',
-    infoBorder:    darkMode ? 'rgba(0,229,255,0.05)'  : 'rgba(0,0,0,0.06)',
-    panelBg:       darkMode ? 'rgba(4,8,20,0.82)'     : 'rgba(255,255,255,0.93)',
-    panelBorder:   darkMode ? 'rgba(0,229,255,0.12)'  : 'rgba(0,80,200,0.14)',
-    panelShadow:   darkMode ? '0 8px 40px rgba(0,0,0,0.6)' : '0 4px 24px rgba(0,0,0,0.12)',
-    panelSolid:    darkMode ? 'rgba(13,16,28,0.98)'   : 'rgba(248,250,255,0.99)',
+    navBorder:     darkMode ? 'rgba(0,229,255,0.18)'  : 'rgba(0,0,0,0.1)',
+    infoBg:        darkMode ? 'rgba(2,5,16,0.95)'     : 'rgba(235,242,255,0.97)',
+    infoBorder:    darkMode ? 'rgba(0,229,255,0.1)'   : 'rgba(0,0,0,0.08)',
+    panelBg:       darkMode ? 'rgba(4,8,20,0.88)'     : 'rgba(255,255,255,0.96)',
+    panelBorder:   darkMode ? 'rgba(0,229,255,0.25)'  : 'rgba(0,80,200,0.2)',
+    panelShadow:   darkMode ? '0 12px 48px rgba(0,0,0,0.75), 0 0 0 1px rgba(0,229,255,0.06)' : '0 4px 24px rgba(0,0,0,0.14)',
+    panelSolid:    darkMode ? 'rgba(10,13,24,0.99)'   : 'rgba(248,250,255,0.99)',
     settingsBg:    darkMode ? 'rgba(4,8,22,0.97)'     : '#f5f8fd',
     settingsBorder:darkMode ? 'rgba(0,229,255,0.12)'  : 'rgba(0,80,200,0.14)',
     text:          darkMode ? '#ffffff'               : '#0a1628',
@@ -721,13 +753,13 @@ const handleTrackReentry = (d: any) => {
     textMuted:     darkMode ? 'rgba(255,255,255,0.35)': 'rgba(10,22,40,0.4)',
     accentDimmed:  darkMode ? 'rgba(0,229,255,0.5)'   : 'rgba(0,100,220,0.7)',
     inputBg:       darkMode ? 'rgba(255,255,255,0.05)': 'rgba(0,0,0,0.04)',
-    inputBorder:   darkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.12)',
+    inputBorder:   darkMode ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.12)',
     dropdownBg:    darkMode ? 'rgba(4,8,22,0.98)'     : 'rgba(248,250,255,0.99)',
     rowHover:      darkMode ? 'rgba(0,229,255,0.06)'  : 'rgba(0,80,200,0.05)',
     accent:        '#00e5ff',
   }
 
-  const panelBase: React.CSSProperties = { ...glass, position: 'absolute', zIndex: 40, borderRadius: 3, overflowY: 'auto', overflowX: 'hidden' }
+  const panelBase: React.CSSProperties = { ...glass, position: 'absolute', zIndex: 40, borderRadius: 6, overflowY: 'auto', overflowX: 'hidden', border: '1px solid rgba(0,229,255,0.22)', boxShadow: '0 12px 48px rgba(0,0,0,0.7), 0 0 0 1px rgba(0,229,255,0.05)' }
   const panelMaxH = `calc(${globeVh}vh - 110px)`
   const panelMaxH2 = `calc(${globeVh}vh - 100px)`
   const sectionTitle = (c = '#00e5ff'): React.CSSProperties => ({ fontSize: 7, color: c, letterSpacing: 3, opacity: 0.6, marginBottom: 8, fontWeight: 700 })
@@ -753,32 +785,35 @@ const handleTrackReentry = (d: any) => {
           satSize={satSize}
           showAtmosphere={showAtmosphere}
           showGrid={showGrid}
+          countryFilter={countryFilter}
+          normCountry={normCountry}
         />
       </div>
 
       {/* ══ ZOOM CONTROLS + MAXIMIZE ══ */}
-      <div style={{ position:'fixed', top:100, right:16, zIndex:60, display:'flex', flexDirection:'column', gap:2 }}>
+      <div style={{ position:'fixed', top:100, right:16, zIndex:200, display: (selected || activePadLaunch) ? 'none' : 'flex', flexDirection:'column', gap:2 }}>
         {([
           { label:'+', title:'Zoom in',  onClick:()=>globeRef.current?.zoomIn()  },
           { label:'−', title:'Zoom out', onClick:()=>globeRef.current?.zoomOut() },
           { label:'⌂', title:'Reset',    onClick:()=>globeRef.current?.reset()   },
         ] as {label:string;title:string;onClick:()=>void}[]).map(b=>(
           <button key={b.label} title={b.title} onClick={b.onClick} style={{
-            width:28, height:28, background:'rgba(4,8,22,0.88)', border:'1px solid rgba(0,229,255,0.18)',
-            borderRadius:3, color:'rgba(200,220,255,0.85)', fontSize:b.label==='⌂'?14:17, fontWeight:700,
+            width:32, height:32, background:'rgba(4,8,22,0.92)', border:'1px solid rgba(0,229,255,0.28)',
+            borderRadius:4, color:'rgba(200,220,255,0.9)', fontSize:b.label==='⌂'?14:18, fontWeight:700,
             cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', lineHeight:1,
-            backdropFilter:'blur(8px)', transition:'background 0.15s, border-color 0.15s',
+            backdropFilter:'blur(12px)', transition:'background 0.15s, border-color 0.15s',
+            boxShadow:'0 2px 8px rgba(0,0,0,0.5)',
           }}
-          onMouseEnter={e=>{(e.currentTarget as HTMLElement).style.background='rgba(0,229,255,0.12)';(e.currentTarget as HTMLElement).style.borderColor='rgba(0,229,255,0.45)'}}
-          onMouseLeave={e=>{(e.currentTarget as HTMLElement).style.background='rgba(4,8,22,0.88)';(e.currentTarget as HTMLElement).style.borderColor='rgba(0,229,255,0.18)'}}
+          onMouseEnter={e=>{(e.currentTarget as HTMLElement).style.background='rgba(0,229,255,0.14)';(e.currentTarget as HTMLElement).style.borderColor='rgba(0,229,255,0.6)'}}
+          onMouseLeave={e=>{(e.currentTarget as HTMLElement).style.background='rgba(4,8,22,0.92)';(e.currentTarget as HTMLElement).style.borderColor='rgba(0,229,255,0.28)'}}
           >{b.label}</button>
         ))}
-        <div style={{ height:1, background:'rgba(0,229,255,0.12)', margin:'2px 0' }} />
+        <div style={{ height:1, background:'rgba(0,229,255,0.25)', margin:'3px 0' }} />
         <button title={globeMaximized ? 'Réduire' : 'Plein écran globe'}
           onClick={()=>setGlobeMaximized(v=>!v)}
-          style={{ width:28, height:28, background:'rgba(4,8,22,0.88)', border:'1px solid rgba(0,229,255,0.18)', borderRadius:3, color:'rgba(200,220,255,0.85)', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', backdropFilter:'blur(8px)', transition:'background 0.15s, border-color 0.15s', padding:0 }}
-          onMouseEnter={e=>{(e.currentTarget as HTMLElement).style.background='rgba(0,229,255,0.12)';(e.currentTarget as HTMLElement).style.borderColor='rgba(0,229,255,0.45)'}}
-          onMouseLeave={e=>{(e.currentTarget as HTMLElement).style.background='rgba(4,8,22,0.88)';(e.currentTarget as HTMLElement).style.borderColor='rgba(0,229,255,0.18)'}}
+          style={{ width:32, height:32, background:'rgba(4,8,22,0.92)', border:'1px solid rgba(0,229,255,0.28)', borderRadius:4, color:'rgba(200,220,255,0.9)', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', backdropFilter:'blur(12px)', transition:'background 0.15s, border-color 0.15s', padding:0, boxShadow:'0 2px 8px rgba(0,0,0,0.5)' }}
+          onMouseEnter={e=>{(e.currentTarget as HTMLElement).style.background='rgba(0,229,255,0.14)';(e.currentTarget as HTMLElement).style.borderColor='rgba(0,229,255,0.6)'}}
+          onMouseLeave={e=>{(e.currentTarget as HTMLElement).style.background='rgba(4,8,22,0.92)';(e.currentTarget as HTMLElement).style.borderColor='rgba(0,229,255,0.28)'}}
         >
           {globeMaximized
             ? <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M4 1H1v3M9 1h3v3M4 12H1V9M9 12h3V9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
@@ -794,18 +829,17 @@ const handleTrackReentry = (d: any) => {
         <div style={{ height:2, background:'linear-gradient(90deg, #00e5ff 0%, #0088ff 40%, #7700ff 70%, #00e5ff 100%)', backgroundSize:'200% 100%' }} />
 
         {/* Barre principale */}
-        <div style={{ height:58, background:'rgba(4,8,22,0.96)', backdropFilter:'blur(28px)', borderBottom:'1px solid rgba(0,229,255,0.08)', display:'flex', alignItems:'stretch' }}>
+        <div style={{ height:60, background:'rgba(4,8,22,0.97)', backdropFilter:'blur(28px)', borderBottom:'2px solid rgba(0,229,255,0.18)', display:'flex', alignItems:'stretch' }}>
 
           {/* Logo */}
-          <div style={{ display:'flex', alignItems:'center', gap:10, padding:'0 20px', borderRight:'1px solid rgba(255,255,255,0.05)', minWidth:190, flexShrink:0 }}>
-            <img src="/favicon.png" alt="logo" style={{ width:28, height:28, filter:'drop-shadow(0 0 6px #00e5ffaa)' }} />
+          <div style={{ display:'flex', alignItems:'center', gap:10, padding:'0 20px', borderRight:'1px solid rgba(0,229,255,0.15)', minWidth:190, flexShrink:0 }}>
+            <img src="/favicon.png" alt="logo" style={{ width:36, height:36 }} />
             <div>
               <div style={{ fontFamily:'Orbitron, sans-serif', fontSize:13, fontWeight:900, letterSpacing:3, lineHeight:1.1 }}>
                 <span style={{ color:'#fff' }}>SPACE</span><span style={{ color:'#00e5ff' }}>MONITOR</span>
               </div>
-              <div style={{ fontSize:9, color:'rgba(0,229,255,0.65)', letterSpacing:2, marginTop:3, display:'flex', alignItems:'center', gap:5 }}>
-                <span style={{ display:'inline-block', width:6, height:6, borderRadius:'50%', background:'#00ff88', boxShadow:'0 0 6px #00ff88', animation:'pulse 2s infinite' }} />
-                LIVE · {satellites.length.toLocaleString()} OBJECTS
+              <div style={{ fontSize:8, color:'rgba(0,229,255,0.5)', letterSpacing:2, marginTop:3 }}>
+                TRACK · ANALYSE · EXPLORE
               </div>
             </div>
           </div>
@@ -818,7 +852,6 @@ const handleTrackReentry = (d: any) => {
               { id:'alerts',     icon:'◈', label:'ALERTS',     count:conjunctionAlerts.length,      col: criticalAlert ? '#ff3355' : '#ff7700', pulse:criticalAlert },
               { id:'position',   icon:'◎', label:'VISIBILITY', count:passes.filter(p => p.visible).length, col:'#00ff88' },
               { id:'crew',       icon:'●', label:'CREW',       count:issCrew.length,                col:'#cc88ff' },
-              { id:'news',       icon:'◇', label:'NEWS',       count:null,                          col:'#88ddff' },
               { id:'reentry',    icon:'▲', label:'REENTRY',    count:reentryList.length,            col:'#ff4400' },
               { id:'history',    icon:'◑', label:'HISTORY',    count:null,                          col:'#aa88ff' },
             ] as { id:Panel; icon:string; label:string; count:number|null; col:string; pulse?:boolean }[]).map(btn => {
@@ -826,7 +859,7 @@ const handleTrackReentry = (d: any) => {
               return (
                 <button key={btn.id as string} onClick={() => togglePanel(btn.id)} style={{
                   display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
-                  gap:2, padding:'0 13px', border:'none', borderBottom: active ? `2px solid ${btn.col}` : '2px solid transparent',
+                  gap:2, padding:'0 13px', border:'none', borderBottom: active ? `3px solid ${btn.col}` : '3px solid transparent',
                   background: active ? `${btn.col}12` : 'transparent',
                   color: active ? btn.col : 'rgba(255,255,255,0.6)',
                   cursor:'pointer', fontFamily:'inherit', transition:'all .18s', position:'relative',
@@ -846,31 +879,52 @@ const handleTrackReentry = (d: any) => {
               )
             })}
 
-            {/* Bouton ⋯ MORE */}
-            {(() => {
-              const anyMoreActive = (['apod','neo','jwst','moon','solarflares'] as Panel[]).includes(openPanel as Panel)
-              return (
-                <button
-                  onClick={() => setMoreMenuOpen(v => !v)}
-                  style={{
-                    display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
-                    gap:2, padding:'0 13px', border:'none', flexShrink:0,
-                    borderBottom: anyMoreActive ? '2px solid #aaaaff' : moreMenuOpen ? '2px solid rgba(255,255,255,0.3)' : '2px solid transparent',
-                    background: moreMenuOpen ? 'rgba(255,255,255,0.05)' : anyMoreActive ? 'rgba(170,170,255,0.08)' : 'transparent',
-                    color: moreMenuOpen || anyMoreActive ? '#fff' : 'rgba(255,255,255,0.5)',
-                    cursor:'pointer', fontFamily:'inherit', transition:'all .18s',
-                  }}
-                >
-                  <span style={{ fontSize:16, letterSpacing:2, lineHeight:1 }}>···</span>
-                  <span style={{ fontSize:8, fontWeight:700, letterSpacing:1.5, marginTop:2 }}>MORE</span>
-                </button>
-              )
-            })()}
           </div>
 
+          {/* Bouton ⋯ MORE — fixe, hors du scroll */}
+          {(() => {
+            const anyMoreActive = (['apod','neo','jwst','moon','solarflares'] as Panel[]).includes(openPanel as Panel)
+            return (
+              <button
+                onClick={() => setMoreMenuOpen(v => !v)}
+                style={{
+                  display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
+                  gap:2, padding:'0 13px', border:'none', flexShrink:0, height:'100%',
+                  borderBottom: anyMoreActive ? '3px solid #aaaaff' : moreMenuOpen ? '3px solid rgba(255,255,255,0.3)' : '3px solid transparent',
+                  background: moreMenuOpen ? 'rgba(255,255,255,0.06)' : anyMoreActive ? 'rgba(170,170,255,0.08)' : 'transparent',
+                  color: moreMenuOpen || anyMoreActive ? '#fff' : 'rgba(255,255,255,0.5)',
+                  cursor:'pointer', fontFamily:'inherit', transition:'all .18s',
+                  borderLeft:'1px solid rgba(0,229,255,0.12)',
+                }}
+              >
+                <span style={{ fontSize:16, letterSpacing:2, lineHeight:1 }}>···</span>
+                <span style={{ fontSize:8, fontWeight:700, letterSpacing:1.5, marginTop:2 }}>MORE</span>
+              </button>
+            )
+          })()}
+
+          {/* Bouton recherche satellite */}
+          <div style={{ display:'flex', alignItems:'center', padding:'0 10px', borderLeft:'1px solid rgba(0,229,255,0.12)', flexShrink:0 }}>
+            <button
+              onClick={() => { setSearchModalOpen(true); setSearchModalQuery('') }}
+              style={{
+                display:'flex', alignItems:'center', gap:8,
+                background:'rgba(255,255,255,0.05)', border:'1px solid rgba(255,255,255,0.1)',
+                borderRadius:6, padding:'6px 14px', cursor:'pointer', transition:'all 0.15s',
+                color:'rgba(255,255,255,0.35)', fontFamily:'inherit',
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background='rgba(0,229,255,0.07)'; (e.currentTarget as HTMLButtonElement).style.borderColor='rgba(0,229,255,0.25)'; (e.currentTarget as HTMLButtonElement).style.color='rgba(255,255,255,0.55)' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background='rgba(255,255,255,0.05)'; (e.currentTarget as HTMLButtonElement).style.borderColor='rgba(255,255,255,0.1)'; (e.currentTarget as HTMLButtonElement).style.color='rgba(255,255,255,0.35)' }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              </svg>
+              <span style={{ fontSize:11, letterSpacing:0.5, whiteSpace:'nowrap' }}>Rechercher un satellite…</span>
+            </button>
+          </div>
 
           {/* Horloge + gear settings */}
-          <div style={{ display:'flex', alignItems:'center', gap:12, padding:'0 16px', borderLeft:'1px solid rgba(255,255,255,0.05)', flexShrink:0 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:12, padding:'0 16px', borderLeft:'1px solid rgba(0,229,255,0.12)', flexShrink:0 }}>
             <div style={{ textAlign:'center' }}>
               <div style={{ fontFamily:'Orbitron, sans-serif', fontSize:18, fontWeight:900, color:'#00e5ff', letterSpacing:2, lineHeight:1 }}>{clock}</div>
               <div style={{ fontSize:9, color:'rgba(0,229,255,0.6)', letterSpacing:2, marginTop:3 }}>
@@ -901,6 +955,7 @@ const handleTrackReentry = (d: any) => {
               { id:'jwst',        icon:'🔭', label:'JWST',        col:'#aa55ff' },
               { id:'moon',        icon:'🌙', label:'LUNE',        col:'#ccaaff' },
               { id:'solarflares', icon:'☀',  label:'SOLAIRE',     col:'#ffaa00' },
+              { id:'deepspace',   icon:'🛸',  label:'DEEP SPACE',  col:'#00ffcc' },
             ] as { id:Panel; icon:string; label:string; col:string }[]).map(p => {
               const active = openPanel === p.id
               return (
@@ -919,14 +974,18 @@ const handleTrackReentry = (d: any) => {
         )}
 
         {/* Barre info secondaire */}
-        <div style={{ height:24, background:'rgba(2,5,16,0.92)', borderBottom:'1px solid rgba(0,229,255,0.05)', display:'flex', alignItems:'center', padding:'0 20px', gap:0 }}>
+        <div style={{ height:24, background:'rgba(2,5,16,0.95)', borderBottom:'1px solid rgba(0,229,255,0.12)', display:'flex', alignItems:'center', padding:'0 20px', gap:0 }}>
           <div style={{ display:'flex', alignItems:'center', gap:24, flex:1 }}>
             {[
-              { label:'TRACKED', val:satellites.length,                                        col:'#00e5ff' },
-              { label:'GPS/GNSS', val:satellites.filter(s=>s.category==='gps').length,         col:'#00ff88' },
-              { label:'STARLINK', val:satellites.filter(s=>s.category==='starlink').length,    col:'#55aaff' },
-              { label:'WEATHER',  val:satellites.filter(s=>s.category==='weather').length,     col:'#ff55ff' },
-              { label:'STATIONS', val:satellites.filter(s=>s.category==='station').length,     col:'#00ffff' },
+              { label: t.catTracked,    val:satellites.length,                                                                    col:'#00e5ff' },
+              { label: t.catGps,        val:satellites.filter(s=>s.category==='gps').length,                                      col:'#00ff88' },
+              { label: t.catStarlink,   val:satellites.filter(s=>s.category==='starlink').length,                                 col:'#55aaff' },
+              { label: t.catInternet,   val:satellites.filter(s=>s.category==='internet').length,                                 col:'#66ddff' },
+              { label: t.catWeather,    val:satellites.filter(s=>s.category==='weather').length,                                  col:'#44ccff' },
+              { label: t.catStations,   val:satellites.filter(s=>s.category==='station').length,                                  col:'#00ffff' },
+              { label: t.catScience,    val:satellites.filter(s=>s.category==='science').length,                                  col:'#ffee44' },
+              { label: t.catTelephonie, val:satellites.filter(s=>s.category==='telephonie').length,                               col:'#ff9944' },
+              { label: t.catDebris,     val:satellites.filter(s=>s.category==='debris').length,                                   col:'#ff4400' },
             ].map(({ label, val, col }) => (
               <div key={label} style={{ display:'flex', alignItems:'center', gap:6 }}>
                 <div style={{ width:4, height:4, borderRadius:'50%', background:col }} />
@@ -936,23 +995,33 @@ const handleTrackReentry = (d: any) => {
             ))}
           </div>
           <div style={{ fontSize:8.5, color:'rgba(255,255,255,0.25)', letterSpacing:1.5 }}>
-            DRAG · ROTATE &nbsp;|&nbsp; SCROLL · ZOOM &nbsp;|&nbsp; CLICK · SELECT
+            {t.hintBar}
           </div>
         </div>
       </div>
 
       {/* ══ PANEL OBJECTS — style COUCHES ══ */}
       {openPanel === 'satellites' && (() => {
-        const CAT_META: Record<string, { icon: string; label: string }> = {
-          station:    { icon: '🛸', label: 'STATIONS' },
-          gps:        { icon: '📍', label: 'GPS / GNSS' },
-          weather:    { icon: '🌤', label: 'MÉTÉO' },
-          science:    { icon: '🔭', label: 'SCIENCE' },
-          starlink:   { icon: '🌐', label: 'STARLINK' },
-          telephonie: { icon: '📡', label: 'TÉLÉPHONIE' },
+        const CAT_META: Record<string, { label: string }> = {
+          station:    { label: t.layerStation },
+          gps:        { label: t.layerGps },
+          weather:    { label: t.layerWeather },
+          science:    { label: t.layerScience },
+          starlink:   { label: t.layerStarlink },
+          internet:   { label: 'ONEWEB / KUIPER' },
+          telephonie: { label: t.layerTelephonie },
+          debris:     { label: 'DÉBRIS' },
         }
+        const LAYER_GROUPS: { icon: string; parent: string; cats: string[] }[] = [
+          { icon: '🌐', parent: 'INTERNET',       cats: ['starlink', 'internet'] },
+          { icon: '📡', parent: 'COMMUNICATIONS', cats: ['telephonie'] },
+          { icon: '🛰️', parent: 'POSITIONNEMENT', cats: ['gps'] },
+          { icon: '🔬', parent: 'SCIENCE',         cats: ['science', 'weather'] },
+          { icon: '🏠', parent: 'STATIONS',        cats: ['station'] },
+          { icon: '💥', parent: 'DÉBRIS',          cats: ['debris'] },
+        ]
         return (
-          <div style={{ position: 'absolute', top: 84, left: 16, width: 260, maxHeight: satCollapsed ? 'none' : panelMaxH2, zIndex: 40, display: 'flex', flexDirection: 'column', background: 'rgba(13,16,28,0.98)', backdropFilter: 'blur(20px)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6, boxShadow: '0 8px 32px rgba(0,0,0,0.7)', overflow: 'hidden' }}>
+          <div style={{ position: 'absolute', top: 100, left: 16, width: 260, maxHeight: satCollapsed ? 'none' : panelMaxH2, zIndex: 40, display: 'flex', flexDirection: 'column', background: 'rgba(10,13,24,0.99)', backdropFilter: 'blur(24px)', border: '1px solid rgba(0,229,255,0.22)', borderRadius: 6, boxShadow: '0 12px 48px rgba(0,0,0,0.8), 0 0 0 1px rgba(0,229,255,0.05)', overflow: 'hidden' }}>
 
             {/* Header COUCHES — clic = réduit/agrandi */}
             <div onClick={() => setSatCollapsed(v => !v)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '13px 16px', borderBottom: satCollapsed ? 'none' : '1px solid rgba(255,255,255,0.07)', flexShrink: 0, cursor: 'pointer' }}
@@ -962,7 +1031,6 @@ const handleTrackReentry = (d: any) => {
               <span style={{ fontFamily: 'Orbitron, sans-serif', fontSize: 12, fontWeight: 700, letterSpacing: 3, color: 'rgba(255,255,255,0.9)' }}>COUCHES</span>
               <span style={{ color: 'rgba(0,229,255,0.5)', fontSize: 11, lineHeight: 1 }}>{satCollapsed ? '▶' : '▼'}</span>
             </div>
-
 
             {!satCollapsed && <>
 
@@ -993,58 +1061,48 @@ const handleTrackReentry = (d: any) => {
               </select>
             </div>
 
-            {/* Catégories — checkboxes (scrollable) + liste */}
+            {/* Catégories groupées par parent — scrollable */}
             <div style={{ flex: 1, overflowY: 'auto' }}>
-              {ALL_CATS.map(cat => {
-                const isActive = activeFilters.has(cat)
-                const { icon, label } = CAT_META[cat] || { icon: '●', label: cat.toUpperCase() }
-                const col = CAT_COLOR[cat] || '#00ff88'
-                return (
-                  <div
-                    key={cat}
-                    onClick={() => toggleFilter(cat)}
-                    style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.05)', transition: 'background .12s' }}
-                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.04)' }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
-                  >
-                    <div style={{ width: 15, height: 15, borderRadius: 3, flexShrink: 0, background: isActive ? col : 'transparent', border: `2px solid ${isActive ? col : 'rgba(255,255,255,0.22)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all .15s' }}>
-                      {isActive && <span style={{ color: '#000', fontSize: 9, lineHeight: 1, fontWeight: 900 }}>✓</span>}
-                    </div>
-                    <span style={{ fontSize: 13, flexShrink: 0, lineHeight: 1 }}>{icon}</span>
-                    <span style={{ flex: 1, fontSize: 9.5, letterSpacing: 1.5, color: isActive ? '#fff' : 'rgba(255,255,255,0.35)', fontWeight: 700 }}>{label}</span>
+              {LAYER_GROUPS.map(group => (
+                <div key={group.parent}>
+                  {/* En-tête du groupe */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px 5px', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                    <span style={{ fontSize: 12, lineHeight: 1 }}>{group.icon}</span>
+                    <span style={{ fontSize: 7, letterSpacing: 2.5, color: 'rgba(255,255,255,0.38)', fontWeight: 700 }}>{group.parent}</span>
                   </div>
-                )
-              })}
 
-              {/* Séparateur */}
-              <div style={{ height: 1, background: 'rgba(255,255,255,0.06)', margin: '4px 0' }} />
-
-              {/* Liste satellites */}
-              {filteredSats.length === 0 ? (
-                <div style={{ padding: '24px 16px', textAlign: 'center', fontSize: 10, color: 'rgba(255,255,255,0.2)', letterSpacing: 1 }}>
-                  AUCUN OBJET CORRESPONDANT
-                </div>
-              ) : (
-                filteredSats.map(sat => {
-                  const isSel = sat.norad === selectedNorad
-                  const col = CAT_COLOR[sat.category]
-                  return (
-                    <div key={sat.norad} onClick={() => selectSat(sat.norad)} style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', background: isSel ? `${col}14` : 'transparent', borderLeft: `3px solid ${isSel ? col : 'transparent'}`, borderBottom: '1px solid rgba(255,255,255,0.03)', transition: 'all 0.1s' }}
-                      onMouseEnter={e => { if (!isSel) (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.04)' }}
-                      onMouseLeave={e => { if (!isSel) (e.currentTarget as HTMLElement).style.background = 'transparent' }}
-                    >
-                      <div style={{ width: 7, height: 7, borderRadius: '50%', background: col, boxShadow: isSel ? `0 0 6px ${col}` : 'none', flexShrink: 0 }} />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 10, color: isSel ? '#fff' : 'rgba(255,255,255,0.65)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          <span style={{ marginRight: 5 }}>{getFlag(sat.country || sat.countryCode)}</span>
-                          {sat.name}
+                  {/* Sous-catégories */}
+                  {group.cats.map((cat, idx) => {
+                    const isActive = activeFilters.has(cat)
+                    const col      = CAT_COLOR[cat] || '#00ff88'
+                    const label    = CAT_META[cat]?.label || cat.toUpperCase()
+                    const count    = satellites.filter((s: any) => s.category === cat).length
+                    const isLast   = idx === group.cats.length - 1
+                    return (
+                      <div
+                        key={cat}
+                        onClick={() => toggleFilter(cat)}
+                        style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px 8px 28px', cursor: 'pointer', borderBottom: isLast ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(255,255,255,0.03)', transition: 'background .12s' }}
+                        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.04)' }}
+                        onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+                      >
+                        {/* Connecteur arbre */}
+                        <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.18)', flexShrink: 0, marginLeft: -10 }}>
+                          {isLast ? '└' : '├'}
+                        </span>
+                        {/* Checkbox */}
+                        <div style={{ width: 14, height: 14, borderRadius: 3, flexShrink: 0, background: isActive ? col : 'transparent', border: `2px solid ${isActive ? col : 'rgba(255,255,255,0.22)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all .15s' }}>
+                          {isActive && <span style={{ color: '#000', fontSize: 9, lineHeight: 1, fontWeight: 900 }}>✓</span>}
                         </div>
+                        <span style={{ flex: 1, fontSize: 9, letterSpacing: 1.5, color: isActive ? '#fff' : 'rgba(255,255,255,0.35)', fontWeight: 700 }}>{label}</span>
+                        {count > 0 && (
+                          <span style={{ fontSize: 7.5, color: isActive ? col : 'rgba(255,255,255,0.2)', fontWeight: 600 }}>{count.toLocaleString()}</span>
+                        )}
                       </div>
-                      <div style={{ fontSize: 8, color: 'rgba(255,255,255,0.25)', flexShrink: 0 }}>{sat.norad}</div>
-                    </div>
-                  )
-                })
-              )}
+                    )
+                  })}
+                </div>
+              ))}
             </div>
 
             </>}
@@ -1054,7 +1112,7 @@ const handleTrackReentry = (d: any) => {
 
       {/* ══ PANEL MISSIONS ══ */}
       {openPanel === 'missions' && (
-        <div style={{ ...panelBase, top: 84, left: 16, width: 290, maxHeight: panelMaxH2, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ ...panelBase, top: 100, left: 16, width: 290, maxHeight: panelMaxH2, display: 'flex', flexDirection: 'column' }}>
           <div style={{ height: 2, background: 'linear-gradient(90deg, #ffaa00, transparent)' }} />
           <div style={{ padding: '12px 14px 8px', borderBottom: '1px solid rgba(255,170,0,0.1)', display: 'flex', justifyContent: 'space-between' }}>
             <span style={sectionTitle('#ffaa00')}>UPCOMING LAUNCHES — {upcoming.length}</span>
@@ -1091,7 +1149,7 @@ const handleTrackReentry = (d: any) => {
         return (
           <>
             {/* LEFT: liste des alertes */}
-            <div style={{ ...panelBase, top: 84, left: 16, width: 300, maxHeight: panelMaxH2, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ ...panelBase, top: 100, left: 16, width: 300, maxHeight: panelMaxH2, display: 'flex', flexDirection: 'column' }}>
               <div style={{ height: 2, background: `linear-gradient(90deg, ${critical > 0 ? '#ff3355' : '#ff8800'}, transparent)` }} />
               <div style={{ padding: '12px 14px 8px', borderBottom: '1px solid rgba(255,50,80,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
@@ -1160,7 +1218,7 @@ const handleTrackReentry = (d: any) => {
               const satAObj = allSats.find(s => s.norad === a.noradA)
               const satBObj = allSats.find(s => s.norad === a.noradB)
               return (
-                <div style={{ ...panelBase, top: 84, left: 332, width: 340, maxHeight: panelMaxH2, display: 'flex', flexDirection: 'column' }}>
+                <div style={{ ...panelBase, top: 100, left: 332, width: 340, maxHeight: panelMaxH2, display: 'flex', flexDirection: 'column' }}>
                   <div style={{ height: 2, background: `linear-gradient(90deg, ${ac}, transparent)` }} />
                   <div style={{ padding: '12px 14px 8px', borderBottom: `1px solid ${ac}20`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>
@@ -1245,7 +1303,7 @@ const handleTrackReentry = (d: any) => {
 
       {/* ══ PANEL SPACE WEATHER ══ */}
       {openPanel === 'weather' && (
-        <div style={{ ...panelBase, top: 84, left: 16, width: 300, maxHeight: panelMaxH2, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ ...panelBase, top: 100, left: 16, width: 300, maxHeight: panelMaxH2, display: 'flex', flexDirection: 'column' }}>
           <div style={{ height: 2, background: `linear-gradient(90deg, ${spaceWeather ? kpColor(spaceWeather.kp) : '#00ccff'}, transparent)`, flexShrink: 0 }} />
           <div style={{ padding: '12px 14px 10px', borderBottom: '1px solid rgba(0,200,255,0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: 7, color: 'rgba(0,200,255,0.85)', letterSpacing: 3, fontWeight: 700 }}>SPACE WEATHER</span>
@@ -1282,7 +1340,7 @@ const handleTrackReentry = (d: any) => {
 
       {/* ══ PANEL ISS CREW ══ */}
       {openPanel === 'crew' && (
-        <div style={{ ...panelBase, top: 84, left: 16, width: 290, maxHeight: panelMaxH2, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ ...panelBase, top: 100, left: 16, width: 290, maxHeight: panelMaxH2, display: 'flex', flexDirection: 'column' }}>
           <div style={{ height: 2, background: 'linear-gradient(90deg, #cc88ff, transparent)' }} />
           <div style={{ padding: '12px 14px 10px', borderBottom: '1px solid rgba(200,136,255,0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: 7, color: 'rgba(200,136,255,0.9)', letterSpacing: 3, fontWeight: 700 }}>HUMANS IN SPACE NOW</span>
@@ -1332,7 +1390,7 @@ const handleTrackReentry = (d: any) => {
 
       {/* ══ PANEL NEWS ══ */}
       {openPanel === 'news' && (
-        <div style={{ ...panelBase, top: 84, left: 16, width: 320, maxHeight: panelMaxH2, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ ...panelBase, top: 100, left: 16, width: 320, maxHeight: panelMaxH2, display: 'flex', flexDirection: 'column' }}>
           <div style={{ height: 2, background: 'linear-gradient(90deg, #88ddff, transparent)' }} />
           <div style={{ padding: '12px 14px 10px', borderBottom: '1px solid rgba(136,221,255,0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
             <span style={{ fontSize: 7, color: 'rgba(136,221,255,0.5)', letterSpacing: 3, fontWeight: 700 }}>SPACE NEWS</span>
@@ -1356,7 +1414,7 @@ const handleTrackReentry = (d: any) => {
 
       {/* ══ PANEL REENTRY ══ */}
       {openPanel === 'reentry' && (
-        <div style={{ ...panelBase, top: 84, left: 16, width: 300, maxHeight: panelMaxH2, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ ...panelBase, top: 100, left: 16, width: 300, maxHeight: panelMaxH2, display: 'flex', flexDirection: 'column' }}>
           <div style={{ height: 2, background: 'linear-gradient(90deg, #ff4400, transparent)' }} />
           <div style={{ padding: '12px 14px 10px', borderBottom: '1px solid rgba(255,68,0,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
             <span style={{ fontSize: 7, color: 'rgba(255,100,0,0.6)', letterSpacing: 3, fontWeight: 700 }}>🔥 REENTRY WATCH</span>
@@ -1384,7 +1442,7 @@ const handleTrackReentry = (d: any) => {
 
       {/* ══ PANEL HISTORY ══ */}
       {openPanel === 'history' && (
-        <div style={{ ...panelBase, top: 84, left: 16, width: 300, maxHeight: panelMaxH2, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ ...panelBase, top: 100, left: 16, width: 300, maxHeight: panelMaxH2, display: 'flex', flexDirection: 'column' }}>
           <div style={{ height: 2, background: 'linear-gradient(90deg, #aa88ff, transparent)' }} />
           <div style={{ padding: '12px 14px 10px', borderBottom: '1px solid rgba(170,136,255,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: 7, color: 'rgba(170,136,255,0.6)', letterSpacing: 3, fontWeight: 700 }}>🛸 LAUNCH HISTORY</span>
@@ -1412,7 +1470,7 @@ const handleTrackReentry = (d: any) => {
       {/* ══ PANEL VISIBILITY ══ */}
       {openPanel === 'position' && (
         <div style={{
-          position: 'absolute', top: 84, left: 16, width: 320, maxHeight: panelMaxH2,
+          position: 'absolute', top: 100, left: 16, width: 320, maxHeight: panelMaxH2,
           zIndex: 40, display: 'flex', flexDirection: 'column',
           background: th.panelSolid, backdropFilter: 'blur(20px)',
           border: `1px solid ${th.panelBorder}`, borderRadius: 6,
@@ -1481,23 +1539,23 @@ const handleTrackReentry = (d: any) => {
                 {/* Stats line */}
                 <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
                   <div style={{ flex: 1, padding: '7px 10px', background: 'rgba(0,255,136,0.08)', border: '1px solid rgba(0,255,136,0.18)', borderRadius: 4, textAlign: 'center' }}>
-                    <div style={{ fontSize: 18, fontWeight: 900, color: '#00ff88', fontFamily: 'Orbitron, sans-serif', lineHeight: 1 }}>{passes.filter(p => p.visible).length}</div>
-                    <div style={{ fontSize: 7, color: 'rgba(0,255,136,0.6)', letterSpacing: 1.5, marginTop: 3 }}>SATELLITES VISIBLES</div>
+                    <div style={{ fontSize: 18, fontWeight: 900, color: '#00ff88', fontFamily: 'Orbitron, sans-serif', lineHeight: 1 }}>{passes.length}</div>
+                    <div style={{ fontSize: 7, color: 'rgba(0,255,136,0.6)', letterSpacing: 1.5, marginTop: 3 }}>VISIBLES (&gt;10°)</div>
                   </div>
-                  <div style={{ flex: 1, padding: '7px 10px', background: 'rgba(0,229,255,0.05)', border: '1px solid rgba(0,229,255,0.12)', borderRadius: 4, textAlign: 'center' }}>
-                    <div style={{ fontSize: 18, fontWeight: 900, color: '#00e5ff', fontFamily: 'Orbitron, sans-serif', lineHeight: 1 }}>{passes.length}</div>
-                    <div style={{ fontSize: 7, color: 'rgba(0,229,255,0.5)', letterSpacing: 1.5, marginTop: 3 }}>AU-DESSUS HORIZON</div>
+                  <div style={{ flex: 1, padding: '7px 10px', background: 'rgba(255,200,0,0.05)', border: '1px solid rgba(255,200,0,0.12)', borderRadius: 4, textAlign: 'center' }}>
+                    <div style={{ fontSize: 18, fontWeight: 900, color: '#ffcc00', fontFamily: 'Orbitron, sans-serif', lineHeight: 1 }}>{passes.filter(p => p.elevationDeg >= 30).length}</div>
+                    <div style={{ fontSize: 7, color: 'rgba(255,200,0,0.5)', letterSpacing: 1.5, marginTop: 3 }}>HAUTE ÉLÉV. (&gt;30°)</div>
                   </div>
                 </div>
 
                 {/* Satellite list */}
-                {passes.slice(0, 50).map((p, i) => (
+                {passes.map((p, i) => (
                   <div key={p.norad} onClick={() => { selectSat(p.norad); }} style={{
                     display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px',
                     marginBottom: 4, borderRadius: 4, cursor: 'pointer',
                     background: i % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent',
-                    border: `1px solid ${p.visible ? 'rgba(0,255,136,0.12)' : 'rgba(255,255,255,0.04)'}`,
-                    borderLeft: `3px solid ${p.visible ? '#00ff88' : 'rgba(255,255,255,0.1)'}`,
+                    border: '1px solid rgba(0,255,136,0.1)',
+                    borderLeft: `3px solid ${p.elevationDeg >= 45 ? '#00ff88' : p.elevationDeg >= 20 ? 'rgba(0,255,136,0.5)' : 'rgba(0,255,136,0.2)'}`,
                   }}>
                     <div style={{ width: 8, height: 8, borderRadius: '50%', background: CAT_COLOR[p.category] || '#fff', flexShrink: 0 }} />
                     <div style={{ flex: 1, minWidth: 0 }}>
@@ -1505,7 +1563,7 @@ const handleTrackReentry = (d: any) => {
                       <div style={{ fontSize: 7.5, color: th.textMuted, marginTop: 1 }}>{(CAT_LABEL[p.category] || p.category).toUpperCase()}</div>
                     </div>
                     <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: p.visible ? '#00ff88' : th.textSub }}>{p.elevationDeg}°</div>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: p.elevationDeg >= 45 ? '#00ff88' : p.elevationDeg >= 20 ? '#88ffcc' : th.textSub }}>{p.elevationDeg}°</div>
                       <div style={{ fontSize: 7, color: th.textMuted }}>Az {p.azimuthDeg}°</div>
                       {p.rangekm > 0 && <div style={{ fontSize: 7, color: th.textMuted }}>{p.rangekm} km</div>}
                     </div>
@@ -1526,6 +1584,19 @@ const handleTrackReentry = (d: any) => {
       {openPanel === 'jwst' && <JwstPanel th={th} onClose={() => setOpenPanel(null)} maxHeight={panelMaxH2} />}
       {openPanel === 'moon' && <MoonPanel th={th} onClose={() => setOpenPanel(null)} maxHeight={panelMaxH2} />}
       {openPanel === 'solarflares' && <SolarFlaresPanel th={th} kp={spaceWeather?.kp ?? 0} onClose={() => setOpenPanel(null)} maxHeight={panelMaxH2} />}
+
+      {/* ══ PANEL DEEP SPACE ══ */}
+      {openPanel === 'deepspace' && (
+        <DeepSpacePanel
+          th={th}
+          panelBase={panelBase}
+          maxHeight={panelMaxH2}
+          selectedNorad={selectedNorad}
+          selectSat={(norad) => { selectSat(norad); setOpenPanel(null) }}
+          onClose={() => setOpenPanel(null)}
+          getFlag={getFlag}
+        />
+      )}
 
       {/* ══ LAUNCH PAD PANEL ══ */}
       {activePadLaunch && (() => {
@@ -1556,7 +1627,7 @@ const handleTrackReentry = (d: any) => {
         )
 
         return (
-          <div style={{ ...panelBase, top: 84, right: 16, width: 370, maxHeight: panelMaxH2, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ ...panelBase, top: 100, right: 16, width: 370, maxHeight: panelMaxH2, display: 'flex', flexDirection: 'column' }}>
             <div style={{ height: 2, background: 'linear-gradient(90deg, #ffaa00, #ff6600, transparent)' }} />
 
             {/* Header */}
@@ -1806,7 +1877,7 @@ const handleTrackReentry = (d: any) => {
         )
 
         return (
-          <div style={{ ...panelBase, top:84, right:16, width:300, zIndex:20, maxHeight:panelMaxH2, display:'flex', flexDirection:'column' }}>
+          <div style={{ ...panelBase, top:100, right:16, width:300, zIndex:20, maxHeight:panelMaxH2, display:'flex', flexDirection:'column' }}>
 
             {/* Barre de couleur catégorie */}
             <div style={{ height:3, background:`linear-gradient(90deg, transparent, ${accent}, transparent)`, flexShrink:0 }} />
@@ -1875,7 +1946,31 @@ const handleTrackReentry = (d: any) => {
               <Row label="CATÉGORIE" value={(CAT_LABEL[selected.category] || 'Débris').toUpperCase()} />
               {countryName !== 'Unknown' && countryName && <Row label="PAYS" value={countryName} />}
               <Row label="LANCEMENT" value={formatDate(selected.launch_date || selected.launchDate)} />
-              {selected.epoch && <Row label="ÉPOQUE TLE" value={new Date(selected.epoch).toLocaleDateString('fr-FR', { day:'2-digit', month:'short', year:'numeric' }).toUpperCase()} />}
+              {selected.epoch && (() => {
+                const ageDays    = (Date.now() - new Date(selected.epoch).getTime()) / 86400000
+                const outOfRange = apogeeKm > 500_000
+                const tleStatus  = ageDays < 7
+                  ? { dot: '#00ff88', label: 'EN DIRECT' }
+                  : ageDays < 30
+                  ? { dot: '#ffaa00', label: 'DONNÉES ANCIENNES' }
+                  : { dot: '#ff4400', label: 'TLE EXPIRÉ' }
+                return (
+                  <>
+                    <Row label="ÉPOQUE TLE" value={new Date(selected.epoch).toLocaleDateString('fr-FR', { day:'2-digit', month:'short', year:'numeric' }).toUpperCase()} />
+                    <div style={{ display:'flex', alignItems:'center', gap:6, padding:'3px 0 6px' }}>
+                      {outOfRange ? (
+                        <span style={{ fontSize:8, color:'rgba(180,180,255,0.6)', fontWeight:700, letterSpacing:1.5 }}>⚫ HORS PORTÉE / ORBITE NON TERRESTRE</span>
+                      ) : (
+                        <>
+                          <div style={{ width:6, height:6, borderRadius:'50%', background:tleStatus.dot, boxShadow:`0 0 6px ${tleStatus.dot}`, flexShrink:0 }} />
+                          <span style={{ fontSize:8, color:tleStatus.dot, fontWeight:700, letterSpacing:1.5 }}>{tleStatus.label}</span>
+                          <span style={{ fontSize:7.5, color:'rgba(255,255,255,0.3)', marginLeft:4 }}>{Math.round(ageDays)}j</span>
+                        </>
+                      )}
+                    </div>
+                  </>
+                )
+              })()}
             </div>
           </div>
         )
@@ -2025,6 +2120,84 @@ const handleTrackReentry = (d: any) => {
           </div>
         </div>
       </>)}
+
+      {/* Modale de recherche satellite */}
+      {searchModalOpen && (() => {
+        const q = searchModalQuery.trim().toLowerCase()
+        const results = q.length >= 1
+          ? allSats.filter((s: any) =>
+              s.name.toLowerCase().includes(q) || s.norad.includes(q)
+            ).slice(0, 60)
+          : []
+        const CAT_COLOR: Record<string, string> = {
+          starlink:'#55aaff', gps:'#00ff88', weather:'#44ccff',
+          station:'#00ffff', science:'#ffee44', debris:'#ff4400', telephonie:'#ff9944',
+        }
+        return (
+          <div
+            onClick={() => setSearchModalOpen(false)}
+            style={{ position:'fixed', inset:0, zIndex:9000, background:'rgba(0,0,0,0.65)', display:'flex', alignItems:'flex-start', justifyContent:'center', paddingTop:80 }}
+          >
+            <div
+              onClick={e => e.stopPropagation()}
+              style={{ width:560, maxWidth:'92vw', background:'rgba(4,8,22,0.98)', border:'1px solid rgba(0,229,255,0.18)', borderRadius:10, overflow:'hidden', boxShadow:'0 24px 64px rgba(0,0,0,0.9)', display:'flex', flexDirection:'column', maxHeight:'70vh' }}
+            >
+              {/* Input */}
+              <div style={{ display:'flex', alignItems:'center', gap:10, padding:'14px 16px', borderBottom:'1px solid rgba(255,255,255,0.07)' }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(0,229,255,0.6)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink:0 }}>
+                  <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+                <input
+                  autoFocus
+                  type="text"
+                  placeholder="Nom du satellite, NORAD ID…"
+                  value={searchModalQuery}
+                  onChange={e => setSearchModalQuery(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Escape') setSearchModalOpen(false) }}
+                  style={{ flex:1, background:'transparent', border:'none', outline:'none', color:'#fff', fontSize:15, fontFamily:'inherit', letterSpacing:0.3 }}
+                />
+                {searchModalQuery && (
+                  <button onClick={() => setSearchModalQuery('')} style={{ background:'none', border:'none', cursor:'pointer', color:'rgba(255,255,255,0.3)', fontSize:16, padding:'0 4px', lineHeight:1 }}>✕</button>
+                )}
+                <span style={{ fontSize:10, color:'rgba(255,255,255,0.2)', letterSpacing:1, border:'1px solid rgba(255,255,255,0.1)', borderRadius:3, padding:'2px 6px' }}>ESC</span>
+              </div>
+
+              {/* Résultats */}
+              <div style={{ overflowY:'auto', flex:1 }}>
+                {q.length === 0 && (
+                  <div style={{ padding:'28px 16px', textAlign:'center', color:'rgba(255,255,255,0.2)', fontSize:12, letterSpacing:1 }}>
+                    Tapez un nom ou un NORAD ID
+                  </div>
+                )}
+                {q.length > 0 && results.length === 0 && (
+                  <div style={{ padding:'28px 16px', textAlign:'center', color:'rgba(255,255,255,0.2)', fontSize:12, letterSpacing:1 }}>
+                    Aucun satellite trouvé
+                  </div>
+                )}
+                {results.map((s: any) => (
+                  <button
+                    key={s.norad}
+                    onClick={() => { selectSat(s.norad); setSearchModalOpen(false); setOpenPanel('satellites') }}
+                    style={{ width:'100%', display:'flex', alignItems:'center', gap:12, padding:'10px 16px', background:'transparent', border:'none', borderBottom:'1px solid rgba(255,255,255,0.04)', cursor:'pointer', textAlign:'left', transition:'background 0.1s' }}
+                    onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,229,255,0.06)')}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                  >
+                    <span style={{ fontSize:16, flexShrink:0 }}>🛰</span>
+                    <span style={{ flex:1, fontSize:12, color:'rgba(255,255,255,0.85)', letterSpacing:0.5 }}>{s.name}</span>
+                    <span style={{ fontSize:9, fontWeight:700, letterSpacing:1.5, color: CAT_COLOR[s.category] ?? 'rgba(255,255,255,0.4)', flexShrink:0 }}>{s.category.toUpperCase()}</span>
+                    <span style={{ fontSize:9, color:'rgba(255,255,255,0.2)', letterSpacing:1, flexShrink:0 }}>#{s.norad}</span>
+                  </button>
+                ))}
+                {results.length === 60 && (
+                  <div style={{ padding:'8px 16px', fontSize:9, color:'rgba(255,255,255,0.2)', letterSpacing:1, textAlign:'center' }}>
+                    Affichage limité à 60 résultats — affinez votre recherche
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
     </div>
   )
