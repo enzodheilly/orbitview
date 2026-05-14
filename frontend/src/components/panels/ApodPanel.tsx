@@ -10,7 +10,7 @@ interface ApodItem {
   copyright?: string
 }
 
-const CACHE_KEY = 'spacemonitor_apod_v1'
+const CACHE_KEY = 'spacemonitor_apod_v2'
 const CACHE_TTL = 6 * 60 * 60 * 1000
 
 export default function ApodPanel({ th, onClose, maxHeight }: { th: any; onClose: () => void; maxHeight?: string }) {
@@ -33,10 +33,12 @@ export default function ApodPanel({ th, onClose, maxHeight }: { th: any; onClose
     } catch { /* ignore */ }
 
     setLoading(true)
-    fetch('https://api.nasa.gov/planetary/apod?api_key=DEMO_KEY&count=5')
+    fetch('/api/nasa/apod')
       .then(r => r.json())
       .then(d => {
+        if (d.error) throw new Error(d.error)
         const arr = Array.isArray(d) ? d : []
+        if (arr.length === 0) throw new Error('empty')
         setItems(arr)
         try { localStorage.setItem(CACHE_KEY, JSON.stringify({ data: arr, ts: Date.now() })) } catch { /* quota */ }
       })

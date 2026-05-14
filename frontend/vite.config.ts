@@ -26,10 +26,10 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       output: {
-        manualChunks: {
-          'three': ['three'],
-          'react-vendor': ['react', 'react-dom'],
-          'zustand': ['zustand'],
+        manualChunks: (id: string) => {
+          if (id.includes('node_modules/three')) return 'three'
+          if (id.includes('node_modules/react') || id.includes('node_modules/react-dom')) return 'react-vendor'
+          if (id.includes('node_modules/zustand')) return 'zustand'
         },
       },
     },

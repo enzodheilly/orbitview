@@ -1,4 +1,4 @@
-export type SatCategory = 'station' | 'gps' | 'weather' | 'science' | 'starlink' | 'telephonie' | 'debris' | 'unknown'
+export type SatCategory = 'station' | 'gps' | 'weather' | 'science' | 'starlink' | 'internet' | 'telephonie' | 'debris' | 'unknown'
 
 export interface TleData {
   line1: string
@@ -35,10 +35,11 @@ export interface SatelliteDTO {
 export const CAT_COLOR: Record<string, string> = {
   station:    '#00ffff',
   gps:        '#00ff88',
-  weather:    '#ff55ff',
+  weather:    '#44ccff',
   science:    '#ffee44',
   starlink:   '#55aaff',
-  telephonie: '#ff88ff',
+  internet:   '#66ddff',
+  telephonie: '#ff9944',
   debris:     '#ff4400',
   unknown:    '#ffffff',
 }
@@ -49,7 +50,20 @@ export const CAT_LABEL: Record<string, string> = {
   weather:    'Météo',
   science:    'Science',
   starlink:   'Starlink',
+  internet:   'Internet LEO',
   telephonie: 'Téléphonie',
   debris:     'Débris',
   unknown:    'Inconnu',
+}
+
+export const CAT_PARENT: Record<string, { icon: string; parent: string; sub: string }> = {
+  starlink:   { icon: '🌐', parent: 'INTERNET',        sub: 'STARLINK'         },
+  internet:   { icon: '🌐', parent: 'INTERNET',        sub: 'ONEWEB / KUIPER'  },
+  telephonie: { icon: '📡', parent: 'COMMUNICATIONS',  sub: 'TÉLÉPHONIE'       },
+  gps:        { icon: '🛰️', parent: 'POSITIONNEMENT',  sub: 'GPS / GNSS'       },
+  science:    { icon: '🔬', parent: 'SCIENCE',          sub: 'SCIENCE'          },
+  weather:    { icon: '🔬', parent: 'SCIENCE',          sub: 'MÉTÉO'            },
+  station:    { icon: '🏠', parent: 'STATIONS',         sub: 'STATION SPATIALE' },
+  debris:     { icon: '💥', parent: 'DÉBRIS',           sub: 'DÉBRIS ORBITAUX'  },
+  unknown:    { icon: '❓', parent: 'INCONNU',          sub: 'NON CLASSIFIÉ'    },
 }

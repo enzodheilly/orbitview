@@ -75,12 +75,11 @@ export default function SolarFlaresPanel({ th, kp, onClose, maxHeight }: { th: a
     } catch { /* ignore */ }
 
     setLoading(true)
-    const startDate = new Date(Date.now() - 30 * 24 * 3600000).toISOString().split('T')[0]
-    const endDate = new Date().toISOString().split('T')[0]
-    fetch(`https://api.nasa.gov/DONKI/FLR?startDate=${startDate}&endDate=${endDate}&api_key=DEMO_KEY`)
+    fetch('/api/nasa/flares')
       .then(r => r.json())
       .then(d => {
-        const arr: Flare[] = Array.isArray(d) ? [...d].reverse() : []
+        if (d.error) throw new Error(d.error)
+        const arr: Flare[] = Array.isArray(d) ? d : []
         setFlares(arr)
         try { localStorage.setItem(CACHE_KEY, JSON.stringify({ data: arr, ts: Date.now() })) } catch { /* quota */ }
       })

@@ -18,6 +18,36 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+    healthcheck:
+      test: ["CMD", "php", "bin/console", "about", "--env=prod", "--no-debug"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    networks:
+      - orbitview
+
+  # ── Scheduler Symfony (TLE toutes les 2h) ────────────────────────
+  scheduler:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: orbitview_scheduler
+    restart: unless-stopped
+    command: ["/bin/sh", "/var/www/html/scheduler-entrypoint.sh"]
+    volumes:
+      - ./backend:/var/www/html
+    environment:
+      APP_ENV: prod
+      DATABASE_URL: "postgresql://orbitview:secret@db:5432/orbitview?serverVersion=16&charset=utf8"
+      REDIS_URL: "redis://redis:6379"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      php:
+        condition: service_healthy
     networks:
       - orbitview
 
