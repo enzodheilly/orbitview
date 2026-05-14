@@ -126,7 +126,21 @@
       "Bash(git -C /Users/dheillyenzo/Documents/tracker_spacial/backend remote show)",
       "Bash(git -C /Users/dheillyenzo/Documents/tracker_spacial add backend)",
       "Bash(git -C /Users/dheillyenzo/Documents/tracker_spacial commit -m ' *)",
-      "Bash(git -C /Users/dheillyenzo/Documents/tracker_spacial push origin feature/upgrade)"
+      "Bash(git -C /Users/dheillyenzo/Documents/tracker_spacial push origin feature/upgrade)",
+      "Bash(git -C /Users/dheillyenzo/Documents/tracker_spacial branch -a)",
+      "Bash(git -C /Users/dheillyenzo/Documents/tracker_spacial log --oneline main..feature/upgrade)",
+      "Bash(git -C /Users/dheillyenzo/Documents/tracker_spacial log --oneline feature/upgrade)",
+      "Bash(git -C /Users/dheillyenzo/Documents/tracker_spacial log --oneline main)",
+      "Bash(git -C /Users/dheillyenzo/Documents/tracker_spacial checkout main)",
+      "Bash(git -C /Users/dheillyenzo/Documents/tracker_spacial stash)",
+      "Bash(git -C /Users/dheillyenzo/Documents/tracker_spacial merge feature/upgrade --ff-only)",
+      "Bash(git -C /Users/dheillyenzo/Documents/tracker_spacial checkout -- .claude/settings.json)",
+      "Bash(git -C /Users/dheillyenzo/Documents/tracker_spacial push origin main)",
+      "Bash(git -C /Users/dheillyenzo/Documents/tracker_spacial branch -d feature/upgrade)",
+      "Bash(git -C /Users/dheillyenzo/Documents/tracker_spacial branch -D worktree-agent-a96a482886947f5f4)",
+      "Bash(git -C /Users/dheillyenzo/Documents/tracker_spacial worktree remove --force .claude/worktrees/agent-a96a482886947f5f4)",
+      "Bash(git -C /Users/dheillyenzo/Documents/tracker_spacial worktree remove -f -f .claude/worktrees/agent-a96a482886947f5f4)",
+      "Bash(git -C /Users/dheillyenzo/Documents/tracker_spacial push origin --delete feature/upgrade feature/ma-modif)"
     ],
     "additionalDirectories": [
       "/Users/dheillyenzo/Documents/tracker_spacial/.claude/worktrees/agent-a96a482886947f5f4/frontend/src/components/panels"
