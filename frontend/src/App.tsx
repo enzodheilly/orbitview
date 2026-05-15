@@ -12,10 +12,7 @@ import { CAT_COLOR, CAT_LABEL, CAT_PARENT, type SatCategory } from './types'
 import { getUpcomingLaunches } from "./api/launch"
 import type { Launch } from "./types/launch"
 import ApodPanel from './components/panels/ApodPanel'
-import NeoPanel from './components/panels/NeoPanel'
-import JwstPanel from './components/panels/JwstPanel'
 import MoonPanel from './components/panels/MoonPanel'
-import SolarFlaresPanel from './components/panels/SolarFlaresPanel'
 import DeepSpacePanel from './components/panels/DeepSpacePanel'
 
 // 🔍 Détection de l'activité du satellite
@@ -82,7 +79,7 @@ function Countdown({ date }: { date: string }) {
 const glass = { background: 'rgba(4,8,20,0.82)', backdropFilter: 'blur(24px)', border: '1px solid rgba(0,229,255,0.12)', boxShadow: '0 8px 40px rgba(0,0,0,0.6)' }
 
 
-type Panel = 'satellites' | 'missions' | 'alerts' | 'position' | 'weather' | 'crew' | 'news' | 'reentry' | 'history' | 'apod' | 'neo' | 'jwst' | 'moon' | 'solarflares' | 'deepspace' | null
+type Panel = 'satellites' | 'missions' | 'alerts' | 'position' | 'weather' | 'crew' | 'news' | 'reentry' | 'apod' | 'moon' | 'deepspace' | null
 
 export default function App() { // ⬅️ DEVENU APP()
   const { satellites, positions, selectedNorad, activeFilters, selectSat, toggleFilter, setTarget, setConjunctionPair, setUserPosition, setVisibleNorads, setAlertMode, setAlertNoradColors } = useSatStore()
@@ -115,7 +112,7 @@ export default function App() { // ⬅️ DEVENU APP()
 
   const [spaceWeather, setSpaceWeather] = useState<any>(null)
   const [issCrew, setIssCrew] = useState<{name:string,craft:string}[]>([])
-  const [news, setNews] = useState<{title:string,summary:string,url:string,published:string,site:string}[]>([])
+  const [news, setNews] = useState<{title:string,summary:string,url:string,published:string,site:string,image:string}[]>([])
   const [loadingNews, setLoadingNews] = useState(false)
   const [showDebrisCloud] = useState(false)
 
@@ -139,6 +136,9 @@ export default function App() { // ⬅️ DEVENU APP()
 
   const [dashboardVh, setDashboardVh] = useState(35)
   const globeVh = 100 - dashboardVh
+  const dashboardInnerRef = useRef<HTMLDivElement>(null)
+  const dashboardOuterRef = useRef<HTMLDivElement>(null)
+  const dashboardVhRef = useRef(35)
 
   const onResizeStart = (e: React.MouseEvent) => {
     e.preventDefault()
@@ -286,16 +286,32 @@ export default function App() { // ⬅️ DEVENU APP()
     if (_llFetchStarted.current) return
     _llFetchStarted.current = true
 
-    const since = new Date(Date.now() - 30*24*3600000).toISOString()
-    const LL_CACHE_KEY = 'spacemonitor_ll_history_v2'
+    const LL_CACHE_KEY = 'spacemonitor_ll_history_v4'
     const LL_TTL = 2 * 3600 * 1000
     setLoadingHistory(true)
     const cachedLL = (() => { try { const r = localStorage.getItem(LL_CACHE_KEY); if (!r) return null; const { data, ts } = JSON.parse(r); return Date.now() - ts < LL_TTL ? data : null } catch { return null } })()
     if (cachedLL) { setHistoryList(cachedLL); setLoadingHistory(false) }
     else {
-      fetch(`https://ll.thespacedevs.com/2.2.0/launch/?limit=10&ordering=-net&net__gte=${since}`)
+      fetch('https://ll.thespacedevs.com/2.2.0/launch/previous/?limit=30&ordering=-net')
         .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.json() })
-        .then(d => { const list = (d.results||[]).map((l: any) => ({ mission_name: l.name, provider: l.launch_service_provider?.name, date: l.net, rocket: l.rocket?.configuration?.name, pad: l.pad?.name, status: l.status?.name })); setHistoryList(list); try { localStorage.setItem(LL_CACHE_KEY, JSON.stringify({ data: list, ts: Date.now() })) } catch { /* ignore */ } })
+        .then(d => {
+          const list = (d.results||[]).map((l: any) => ({
+            mission_name: l.name,
+            provider:     l.launch_service_provider?.name,
+            date:         l.net,
+            rocket:       l.rocket?.configuration?.full_name ?? l.rocket?.configuration?.name,
+            pad:          l.pad?.name,
+            location:     l.pad?.location?.name,
+            country_code: l.pad?.location?.country_code,
+            status:       l.status?.name,
+            orbit:        l.mission?.orbit?.abbrev ?? l.mission?.orbit?.name ?? null,
+            mission_type: l.mission?.type ?? null,
+            image:        l.image ?? null,
+            vehicle_family: l.rocket?.configuration?.family ?? null,
+          }))
+          setHistoryList(list)
+          try { localStorage.setItem(LL_CACHE_KEY, JSON.stringify({ data: list, ts: Date.now() })) } catch { /* ignore */ }
+        })
         .catch(() => {}).finally(() => setLoadingHistory(false))
     }
 
@@ -330,7 +346,7 @@ export default function App() { // ⬅️ DEVENU APP()
     setLoadingNews(true)
     fetch('https://api.spaceflightnewsapi.net/v4/articles/?limit=8&ordering=-published_at')
       .then(r => r.json())
-      .then(d => setNews((d.results || []).map((a: any) => ({ title: a.title, summary: a.summary, url: a.url, published: a.published_at, site: a.news_site }))))
+      .then(d => setNews((d.results || []).map((a: any) => ({ title: a.title, summary: a.summary, url: a.url, published: a.published_at, site: a.news_site, image: a.image_url || '' }))))
       .catch(() => {})
       .finally(() => setLoadingNews(false))
 
@@ -557,6 +573,50 @@ const handleTrackReentry = (d: any) => {
     } catch { setLivePos(null); }
   }, [selected]);
 
+  // Sync dashboardVhRef so the wheel handler never reads a stale closure value
+  useEffect(() => { dashboardVhRef.current = dashboardVh }, [dashboardVh])
+
+  // Non-passive wheel listener on the dashboard outer div:
+  // - sous-panneaux scrollables → laisser faire le navigateur
+  // - dashboard < 85 vh          → agrandir le dashboard (molette classique)
+  // - dashboard à 85 vh          → scroller le contenu interne
+  // Inverse en remontant : contenu d'abord, puis réduire le dashboard
+  useEffect(() => {
+    const el = dashboardOuterRef.current
+    if (!el) return
+    const handler = (e: WheelEvent) => {
+      let target = e.target as HTMLElement | null
+      while (target) {
+        if (target !== dashboardInnerRef.current) {
+          const ov = getComputedStyle(target).overflowY
+          if ((ov === 'auto' || ov === 'scroll') && target.scrollHeight > target.clientHeight) return
+        }
+        if (target === el) break
+        target = target.parentElement
+      }
+      e.preventDefault()
+      const minVh = (50 / window.innerHeight) * 100
+      const maxVh = 85
+      const inner = dashboardInnerRef.current
+      const currentVh = dashboardVhRef.current
+      if (e.deltaY > 0) {
+        if (currentVh < maxVh - 0.5) {
+          setDashboardVh(prev => Math.min(maxVh, prev + e.deltaY / window.innerHeight * 100))
+        } else if (inner) {
+          inner.scrollTop += e.deltaY
+        }
+      } else {
+        if (inner && inner.scrollTop > 0) {
+          inner.scrollTop += e.deltaY
+        } else {
+          setDashboardVh(prev => Math.max(minVh, prev + e.deltaY / window.innerHeight * 100))
+        }
+      }
+    }
+    el.addEventListener('wheel', handler, { passive: false })
+    return () => el.removeEventListener('wheel', handler)
+  }, [])
+
   const displayPos = livePos || selectedPos;
 
   const COUNTRY_NORM: Record<string, string> = {
@@ -736,7 +796,7 @@ const handleTrackReentry = (d: any) => {
       </div>
 
       {/* ══ ZOOM CONTROLS + MAXIMIZE ══ */}
-      <div style={{ position:'fixed', top:100, right:16, zIndex:200, display: (selected || activePadLaunch) ? 'none' : 'flex', flexDirection:'column', gap:2 }}>
+      <div style={{ position:'absolute', top:100, right:16, zIndex:5, display: (selected || activePadLaunch) ? 'none' : 'flex', flexDirection:'column', gap:2 }}>
         {([
           { label:'+', title:'Zoom in',  onClick:()=>globeRef.current?.zoomIn()  },
           { label:'−', title:'Zoom out', onClick:()=>globeRef.current?.zoomOut() },
@@ -798,7 +858,6 @@ const handleTrackReentry = (d: any) => {
               { id:'position',   icon:'◎', label:'VISIBILITY', count:passes.filter(p => p.visible).length, col:'#00ff88' },
               { id:'crew',       icon:'●', label:'CREW',       count:issCrew.length,                col:'#cc88ff' },
               { id:'reentry',    icon:'▲', label:'REENTRY',    count:reentryList.length,            col:'#ff4400' },
-              { id:'history',    icon:'◑', label:'HISTORY',    count:null,                          col:'#aa88ff' },
             ] as { id:Panel; icon:string; label:string; count:number|null; col:string; pulse?:boolean }[]).map(btn => {
               const active = openPanel === btn.id
               return (
@@ -828,7 +887,7 @@ const handleTrackReentry = (d: any) => {
 
           {/* Bouton ⋯ MORE — fixe, hors du scroll */}
           {(() => {
-            const anyMoreActive = (['apod','neo','jwst','moon','solarflares'] as Panel[]).includes(openPanel as Panel)
+            const anyMoreActive = (['apod','moon'] as Panel[]).includes(openPanel as Panel)
             return (
               <button
                 onClick={() => setMoreMenuOpen(v => !v)}
@@ -895,12 +954,9 @@ const handleTrackReentry = (d: any) => {
         {moreMenuOpen && (
           <div style={{ position:'absolute', top:60, left:'50%', transform:'translateX(-50%)', background:'rgba(4,8,22,0.98)', border:'1px solid rgba(255,255,255,0.1)', borderRadius:6, zIndex:200, overflow:'hidden', boxShadow:'0 8px 32px rgba(0,0,0,0.8)', display:'flex' }}>
             {([
-              { id:'apod',        icon:'🌌', label:'APOD',       col:'#ff88aa' },
-              { id:'neo',         icon:'☄',  label:'ASTÉROÏDES', col:'#ff6600' },
-              { id:'jwst',        icon:'🔭', label:'JWST',        col:'#aa55ff' },
-              { id:'moon',        icon:'🌙', label:'LUNE',        col:'#ccaaff' },
-              { id:'solarflares', icon:'☀',  label:'SOLAIRE',     col:'#ffaa00' },
-              { id:'deepspace',   icon:'🛸',  label:'DEEP SPACE',  col:'#00ffcc' },
+              { id:'apod',      icon:'🌌', label:'APOD',      col:'#ff88aa' },
+              { id:'moon',      icon:'🌙', label:'LUNE',       col:'#ccaaff' },
+              { id:'deepspace', icon:'🛸',  label:'DEEP SPACE', col:'#00ffcc' },
             ] as { id:Panel; icon:string; label:string; col:string }[]).map(p => {
               const active = openPanel === p.id
               return (
@@ -1385,32 +1441,6 @@ const handleTrackReentry = (d: any) => {
         </div>
       )}
 
-      {/* ══ PANEL HISTORY ══ */}
-      {openPanel === 'history' && (
-        <div style={{ ...panelBase, top: 100, left: 16, width: 300, maxHeight: panelMaxH2, display: 'flex', flexDirection: 'column' }}>
-          <div style={{ height: 2, background: 'linear-gradient(90deg, #aa88ff, transparent)' }} />
-          <div style={{ padding: '12px 14px 10px', borderBottom: '1px solid rgba(170,136,255,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 7, color: 'rgba(170,136,255,0.6)', letterSpacing: 3, fontWeight: 700 }}>🛸 LAUNCH HISTORY</span>
-            <button onClick={() => { resetAll(); setOpenPanel(null); }} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.3)', cursor: 'pointer', fontSize: 12 }}>✕</button>
-          </div>
-          <div style={{ flex: 1, overflowY: 'auto', padding: '8px 14px 12px' }}>
-            {loadingHistory ? <div style={{ textAlign: 'center', padding: '30px 0', color: 'rgba(170,136,255,0.3)', fontSize: 9 }}>FETCHING...</div>
-            : historyList.map((l: any, i: number) => {
-              const success = l.status?.toLowerCase().includes('success')
-              return (
-                <div key={i} style={{ marginBottom: 8, padding: '10px 12px', background: 'rgba(170,136,255,0.04)', border: '1px solid rgba(170,136,255,0.1)', borderRadius: 2, borderLeft: `3px solid ${success ? '#00ff88' : 'rgba(170,136,255,0.4)'}` }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                    <div style={{ fontSize: 9.5, color: '#fff', fontWeight: 600 }}>{l.mission_name}</div>
-                    <div style={{ fontSize: 7, color: success ? '#00ff88' : 'rgba(255,255,255,0.3)' }}>{success ? '✓' : '✗'}</div>
-                  </div>
-                  <div style={{ fontSize: 8, color: 'rgba(170,136,255,0.5)' }}>{l.provider} · {l.rocket}</div>
-                  <div style={{ fontSize: 8, color: 'rgba(255,255,255,0.25)', marginTop: 4 }}>{new Date(l.date).toLocaleDateString()}</div>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
 
       {/* ══ PANEL VISIBILITY ══ */}
       {openPanel === 'position' && (
@@ -1525,10 +1555,7 @@ const handleTrackReentry = (d: any) => {
 
       {/* ══ PANELS NOUVEAUX ══ */}
       {openPanel === 'apod' && <ApodPanel th={th} onClose={() => setOpenPanel(null)} maxHeight={panelMaxH2} />}
-      {openPanel === 'neo' && <NeoPanel th={th} onClose={() => setOpenPanel(null)} maxHeight={panelMaxH2} />}
-      {openPanel === 'jwst' && <JwstPanel th={th} onClose={() => setOpenPanel(null)} maxHeight={panelMaxH2} />}
       {openPanel === 'moon' && <MoonPanel th={th} onClose={() => setOpenPanel(null)} maxHeight={panelMaxH2} />}
-      {openPanel === 'solarflares' && <SolarFlaresPanel th={th} kp={spaceWeather?.kp ?? 0} onClose={() => setOpenPanel(null)} maxHeight={panelMaxH2} />}
 
       {/* ══ PANEL DEEP SPACE ══ */}
       {openPanel === 'deepspace' && (
@@ -1935,33 +1962,22 @@ const handleTrackReentry = (d: any) => {
 
       {/* ══ DASHBOARD ══ */}
       <div
+        ref={dashboardOuterRef}
         style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: `${dashboardVh}vh`, zIndex: 15, overflowY: 'hidden', overflowX: 'hidden' }}
-        onWheel={(e) => {
-          // Si on scroll sur un panneau interne scrollable, le laisser faire
-          let target = e.target as HTMLElement | null
-          while (target) {
-            const ov = getComputedStyle(target).overflowY
-            if ((ov === 'auto' || ov === 'scroll') && target.scrollHeight > target.clientHeight) return
-            if (target === e.currentTarget) break
-            target = target.parentElement
-          }
-          // Sinon : redimensionner le dashboard (molette = resize)
-          const minVh = (50 / window.innerHeight) * 100
-          setDashboardVh(prev => Math.max(minVh, Math.min(85, prev + e.deltaY / window.innerHeight * 100)))
-        }}
       >
-        <SpaceDashboard
-          spaceWeather={spaceWeather}
-          news={news}
-          launches={launches}
-          issCrew={issCrew}
-          solarWind={solarWind}
-          nasaLiveId={nasaLiveId}
-          satellites={satellites}
-          positions={positions}
-          conjunctionAlerts={conjunctionAlerts.length}
-          onGoToPad={handleGoToPad}
-        />
+        <div ref={dashboardInnerRef} style={{ height: '100%', overflowY: 'auto', overflowX: 'hidden' }}>
+          <SpaceDashboard
+            news={news}
+            launches={launches}
+            nasaLiveId={nasaLiveId}
+            satellites={satellites}
+            positions={positions}
+            conjunctionAlerts={conjunctionAlerts.length}
+            onGoToPad={handleGoToPad}
+            historyList={historyList}
+            loadingHistory={loadingHistory}
+          />
+        </div>
       </div>
 
       {/* ══ RESIZE HANDLE ══ */}
